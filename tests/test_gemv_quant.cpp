@@ -49,11 +49,10 @@ double measure_time_ms(F func, int warmup = 3, int iterations = 10) {
 // LUT: 4-bit E2M1 code -> float value (for codes 0-7, positive values)
 static const float fp4_e2m1_to_float[8] = {0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f};
 
-// Quantize float to 4-bit E2M1 code (0-15)
-inline uint8_t float_to_fp4_e2m1(float val, float scale) {
-    float scaled = val / scale;
-    uint8_t sign = (scaled < 0) ? 0x8 : 0x0;
-    float abs_val = std::abs(scaled);
+// Quantize float to 4-bit E2M1 code (0-15), assumes scale=1
+inline uint8_t float_to_fp4_e2m1(float val) {
+    uint8_t sign = (val < 0) ? 0x8 : 0x0;
+    float abs_val = std::abs(val);
 
     // Find nearest E2M1 value (round half up - ties go to larger magnitude)
     uint8_t best_code = 0;
@@ -70,12 +69,12 @@ inline uint8_t float_to_fp4_e2m1(float val, float scale) {
     return sign | best_code;
 }
 
-// Dequantize 4-bit E2M1 code to float
-inline float fp4_e2m1_to_float_scaled(uint8_t code, float scale) {
+// Dequantize 4-bit E2M1 code to float, assumes scale=1
+inline float fp4_e2m1_to_float_val(uint8_t code) {
     uint8_t sign = (code >> 3) & 0x1;
     uint8_t magnitude = code & 0x7;
     float val = fp4_e2m1_to_float[magnitude];
-    return sign ? -val * scale : val * scale;
+    return sign ? -val : val;
 }
 
 // Pack two FP4 E2M1 values into one byte: [val1(4bits) | val0(4bits)]
@@ -93,21 +92,21 @@ inline void unpack_fp4_pair(uint8_t packed, uint8_t& fp4_0, uint8_t& fp4_1) {
 // Pack an array of floats into FP4 E2M1 packed format (2 values per byte)
 // Input: float array of size n (must be even)
 // Output: uint8_t array of size n/2
-inline void pack_fp4_array(const float* input, uint8_t* output, size_t n, float scale) {
+inline void pack_fp4_array(const float* input, uint8_t* output, size_t n) {
     for (size_t i = 0; i < n; i += 2) {
-        uint8_t fp4_0 = float_to_fp4_e2m1(input[i], scale);
-        uint8_t fp4_1 = float_to_fp4_e2m1(input[i + 1], scale);
+        uint8_t fp4_0 = float_to_fp4_e2m1(input[i]);
+        uint8_t fp4_1 = float_to_fp4_e2m1(input[i + 1]);
         output[i / 2] = pack_fp4_pair(fp4_0, fp4_1);
     }
 }
 
 // Unpack FP4 E2M1 packed array back to floats
-inline void unpack_fp4_array(const uint8_t* input, float* output, size_t n, float scale) {
+inline void unpack_fp4_array(const uint8_t* input, float* output, size_t n) {
     for (size_t i = 0; i < n / 2; ++i) {
         uint8_t fp4_0, fp4_1;
         unpack_fp4_pair(input[i], fp4_0, fp4_1);
-        output[i * 2] = fp4_e2m1_to_float_scaled(fp4_0, scale);
-        output[i * 2 + 1] = fp4_e2m1_to_float_scaled(fp4_1, scale);
+        output[i * 2] = fp4_e2m1_to_float_val(fp4_0);
+        output[i * 2 + 1] = fp4_e2m1_to_float_val(fp4_1);
     }
 }
 
@@ -117,7 +116,6 @@ inline void unpack_fp4_array(const uint8_t* input, float* output, size_t n, floa
 
 bool test_fp4_e2m1_pack_unpack() {
     // Test that packing and unpacking FP4 E2M1 values is lossless
-    const float scale = 1.0f;  // Use scale=1 to test exact E2M1 values
 
     // All 16 possible FP4 E2M1 values
     float test_values[16] = {
@@ -129,8 +127,8 @@ bool test_fp4_e2m1_pack_unpack() {
     int failures = 0;
     for (int i = 0; i < 16; ++i) {
         float val = test_values[i];
-        uint8_t code = float_to_fp4_e2m1(val, scale);
-        float recovered = fp4_e2m1_to_float_scaled(code, scale);
+        uint8_t code = float_to_fp4_e2m1(val);
+        float recovered = fp4_e2m1_to_float_val(code);
 
         // For -0.0, we expect +0.0 back (both are valid representations of zero)
         float expected = (val == -0.0f) ? 0.0f : val;
@@ -149,8 +147,8 @@ bool test_fp4_e2m1_pack_unpack() {
             float val1 = fp4_e2m1_to_float[j];
 
             // Test positive pair
-            uint8_t code0 = float_to_fp4_e2m1(val0, scale);
-            uint8_t code1 = float_to_fp4_e2m1(val1, scale);
+            uint8_t code0 = float_to_fp4_e2m1(val0);
+            uint8_t code1 = float_to_fp4_e2m1(val1);
             uint8_t packed = pack_fp4_pair(code0, code1);
 
             uint8_t unpacked0, unpacked1;
@@ -165,8 +163,8 @@ bool test_fp4_e2m1_pack_unpack() {
             // Test negative pair
             float neg_val0 = -val0;
             float neg_val1 = -val1;
-            uint8_t neg_code0 = float_to_fp4_e2m1(neg_val0, scale);
-            uint8_t neg_code1 = float_to_fp4_e2m1(neg_val1, scale);
+            uint8_t neg_code0 = float_to_fp4_e2m1(neg_val0);
+            uint8_t neg_code1 = float_to_fp4_e2m1(neg_val1);
             uint8_t neg_packed = pack_fp4_pair(neg_code0, neg_code1);
 
             uint8_t neg_unpacked0, neg_unpacked1;
@@ -191,10 +189,10 @@ bool test_fp4_e2m1_pack_unpack() {
     }
 
     std::vector<uint8_t> packed(n / 2);
-    pack_fp4_array(input.data(), packed.data(), n, scale);
+    pack_fp4_array(input.data(), packed.data(), n);
 
     std::vector<float> unpacked(n);
-    unpack_fp4_array(packed.data(), unpacked.data(), n, scale);
+    unpack_fp4_array(packed.data(), unpacked.data(), n);
 
     for (size_t i = 0; i < n; ++i) {
         float expected = (input[i] == -0.0f) ? 0.0f : input[i];
@@ -223,8 +221,8 @@ bool test_fp4_e2m1_pack_unpack() {
     };
 
     for (const auto& test : snap_tests) {
-        uint8_t code = float_to_fp4_e2m1(test.input, scale);
-        float recovered = fp4_e2m1_to_float_scaled(code, scale);
+        uint8_t code = float_to_fp4_e2m1(test.input);
+        float recovered = fp4_e2m1_to_float_val(code);
         if (std::abs(recovered - test.expected) > 1e-6f) {
             printf("  Snap test failed: input=%.2f, expected=%.2f, got=%.2f\n",
                    test.input, test.expected, recovered);
@@ -288,115 +286,140 @@ bool test_fp4_larger_sizes() {
 }
 
 bool test_fp4_correctness() {
-    const size_t M = 1, K = 256, N = 128;
-    const float tolerance = 0.25f;
+    struct TestSize { size_t N; size_t K; const char* name; };
+    std::vector<TestSize> sizes = {
+        {1024, 1024, "1024x1024"},
+        {4096, 4096, "4096x4096"},
+        {4096, 11008, "4096x11008"},
+        {11008, 4096, "11008x4096"},
+    };
 
-    std::vector<float> weights_f32(N * K);
-    std::vector<float> input_f32(K);
+    const size_t M = 1;
+    int total_failures = 0;
 
-    // Generate random test data
-    std::mt19937 rng(42);
-    std::normal_distribution<float> dist(0.0f, 1.0f);
+    // All 16 possible FP4 E2M1 values (for random selection)
+    float e2m1_values[16] = {
+        0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f,
+        -0.0f, -0.5f, -1.0f, -1.5f, -2.0f, -3.0f, -4.0f, -6.0f
+    };
 
-    for (size_t i = 0; i < N * K; ++i) weights_f32[i] = dist(rng);
-    for (size_t i = 0; i < K; ++i) input_f32[i] = dist(rng);
+    for (const auto& sz : sizes) {
+        const size_t N = sz.N;
+        const size_t K = sz.K;
 
-    // Find max for scaling
-    float max_weight = 0.0f, max_input = 0.0f;
-    for (size_t i = 0; i < N * K; ++i) max_weight = std::max(max_weight, std::abs(weights_f32[i]));
-    for (size_t i = 0; i < K; ++i) max_input = std::max(max_input, std::abs(input_f32[i]));
+        const float tolerance = 0.25f;
 
-    float fp4_weight_scale = max_weight / 6.0f;
+        // Generate random data directly from E2M1 values (no scaling needed)
+        std::mt19937 rng(42);
+        std::uniform_int_distribution<int> idx_dist(0, 15);
 
-    // Quantize and pack weights to FP4 E2M1 (2 values per byte)
-    std::vector<uint8_t> weights_fp4_packed(N * K / 2);
-    for (size_t row = 0; row < N; ++row) {
-        pack_fp4_array(&weights_f32[row * K], &weights_fp4_packed[row * K / 2], K, fp4_weight_scale);
-    }
+        std::vector<float> weights_f32(N * K);
+        std::vector<float> input_f32(K);
 
-    // Dequantize FP4 weights to FP16 for reference computation
-    std::vector<__fp16> weights_f16(N * K);
-    for (size_t row = 0; row < N; ++row) {
-        std::vector<float> unpacked(K);
-        unpack_fp4_array(&weights_fp4_packed[row * K / 2], unpacked.data(), K, fp4_weight_scale);
-        for (size_t k = 0; k < K; ++k) {
-            weights_f16[row * K + k] = static_cast<__fp16>(unpacked[k]);
+        for (size_t i = 0; i < N * K; ++i) weights_f32[i] = e2m1_values[idx_dist(rng)];
+        for (size_t i = 0; i < K; ++i) input_f32[i] = e2m1_values[idx_dist(rng)];
+
+        // Quantize and pack weights to FP4 E2M1 (2 values per byte)
+        std::vector<uint8_t> weights_fp4_packed(N * K / 2);
+        for (size_t row = 0; row < N; ++row) {
+            pack_fp4_array(&weights_f32[row * K], &weights_fp4_packed[row * K / 2], K);
         }
-    }
 
-    // Quantize input to FP4 (same format as weights)
-    float fp4_input_scale = max_input / 6.0f;
-    std::vector<uint8_t> input_fp4_packed(K / 2);
-    pack_fp4_array(input_f32.data(), input_fp4_packed.data(), K, fp4_input_scale);
-
-    // Dequantize input to FP16 for reference computation
-    std::vector<__fp16> input_f16(K);
-    {
-        std::vector<float> unpacked(K);
-        unpack_fp4_array(input_fp4_packed.data(), unpacked.data(), K, fp4_input_scale);
-        for (size_t i = 0; i < K; ++i) {
-            input_f16[i] = static_cast<__fp16>(unpacked[i]);
-        }
-    }
-
-    // Compute FP16 reference result (using FP4-quantized-then-dequantized values)
-    std::vector<__fp16> output_f16(N);
-    cactus_matmul_f16(input_f16.data(), weights_f16.data(), output_f16.data(), M, K, N);
-
-    // Compute FP4 result (using packed input and weights)
-    // The kernel expects K to be the number of elements (not bytes), and handles packed data internally
-    std::vector<int32_t> output_i32(N);
-    cactus_matmul_f4_to_int32(reinterpret_cast<const int8_t*>(input_fp4_packed.data()),
-                              reinterpret_cast<const int8_t*>(weights_fp4_packed.data()),
-                              output_i32.data(), M, K, N);
-
-    // Scale FP4 output to compare with FP16
-    // The kernel's LUT values are 2x the E2M1 floats, and it divides by 4 at the end
-    // So the kernel computes: (input_lut * 2) * (weight_lut * 2) / 4 = input_lut * weight_lut
-    // where input_lut and weight_lut are the E2M1 integer codes (0-7 for magnitudes)
-    // To get the actual value: result * fp4_input_scale * fp4_weight_scale
-    float output_scale = fp4_input_scale * fp4_weight_scale;
-
-    // Compare results
-    int failures = 0;
-    float max_err = 0.0f;
-    float sum_err = 0.0f;
-    float max_rel_err = 0.0f;
-    float sum_rel_err = 0.0f;
-    float max_output = 0.0f;
-    float sum_output = 0.0f;
-    for (size_t i = 0; i < N; ++i) {
-        float fp16_val = static_cast<float>(output_f16[i]);
-        float fp4_val = static_cast<float>(output_i32[i]) * output_scale;
-        float err = std::abs(fp16_val - fp4_val);
-        // Only compute relative error for outputs with meaningful magnitude
-        float rel_err = (std::abs(fp16_val) > 0.1f) ? err / std::abs(fp16_val) : 0.0f;
-
-        max_err = std::max(max_err, err);
-        sum_err += err;
-        max_rel_err = std::max(max_rel_err, rel_err);
-        sum_rel_err += rel_err;
-        max_output = std::max(max_output, std::abs(fp16_val));
-        sum_output += std::abs(fp16_val);
-
-        if (err > tolerance) {
-            if (failures < 5) {
-                printf("  Mismatch at %zu: FP16=%.4f, FP4=%.4f, err=%.4f (rel=%.2f%%)\n",
-                       i, fp16_val, fp4_val, err, rel_err * 100.0f);
+        // Dequantize FP4 weights to FP16 for reference computation
+        std::vector<__fp16> weights_f16(N * K);
+        for (size_t row = 0; row < N; ++row) {
+            std::vector<float> unpacked(K);
+            unpack_fp4_array(&weights_fp4_packed[row * K / 2], unpacked.data(), K);
+            for (size_t k = 0; k < K; ++k) {
+                weights_f16[row * K + k] = static_cast<__fp16>(unpacked[k]);
             }
-            failures++;
         }
+
+        // Quantize input to FP4 (same format as weights)
+        std::vector<uint8_t> input_fp4_packed(K / 2);
+        pack_fp4_array(input_f32.data(), input_fp4_packed.data(), K);
+
+        // Dequantize input to FP16 for reference computation
+        std::vector<__fp16> input_f16(K);
+        {
+            std::vector<float> unpacked(K);
+            unpack_fp4_array(input_fp4_packed.data(), unpacked.data(), K);
+            for (size_t i = 0; i < K; ++i) {
+                input_f16[i] = static_cast<__fp16>(unpacked[i]);
+            }
+        }
+
+        // Compute FP16 reference result (using FP4-quantized-then-dequantized values)
+        std::vector<__fp16> output_f16(N);
+        cactus_matmul_f16(input_f16.data(), weights_f16.data(), output_f16.data(), M, K, N);
+
+        // Compute FP4 result (using packed input and weights)
+        std::vector<int32_t> output_i32(N);
+        cactus_matmul_f4_to_int32(reinterpret_cast<const int8_t*>(input_fp4_packed.data()),
+                                  reinterpret_cast<const int8_t*>(weights_fp4_packed.data()),
+                                  output_i32.data(), M, K, N);
+
+        // Compute errors and metrics
+        std::vector<float> all_errors;
+        float sum_err = 0.0f;
+        float sum_sq_err = 0.0f;
+        float dot_product = 0.0f;
+        float norm_fp16_sq = 0.0f;
+        float norm_fp4_sq = 0.0f;
+        float max_fp16 = 0.0f;
+
+        for (size_t i = 0; i < N; ++i) {
+            float fp16_val = static_cast<float>(output_f16[i]);
+            float fp4_val = static_cast<float>(output_i32[i]);  // scale=1, no scaling needed
+            float err = std::abs(fp16_val - fp4_val);
+
+            all_errors.push_back(err);
+            sum_err += err;
+            sum_sq_err += err * err;
+            dot_product += fp16_val * fp4_val;
+            norm_fp16_sq += fp16_val * fp16_val;
+            norm_fp4_sq += fp4_val * fp4_val;
+            max_fp16 = std::max(max_fp16, std::abs(fp16_val));
+        }
+        std::sort(all_errors.begin(), all_errors.end());
+
+        float max_err = all_errors.back();
+        float mean_err = sum_err / static_cast<float>(N);
+        float p50 = all_errors[N / 2];
+        float p90 = all_errors[N * 90 / 100];
+        float p99 = all_errors[N * 99 / 100];
+
+        // MSE, CosSim, PSNR
+        float mse = sum_sq_err / static_cast<float>(N);
+        float cos_sim = dot_product / (std::sqrt(norm_fp16_sq) * std::sqrt(norm_fp4_sq) + 1e-8f);
+        float psnr = (mse > 0) ? 10.0f * std::log10((max_fp16 * max_fp16) / mse) : INFINITY;
+
+        // Count failures against tolerance
+        int failures = 0;
+        for (float err : all_errors) {
+            if (err > tolerance) failures++;
+        }
+
+        // Print first 5 results on one line
+        printf("  [%s] FP16: ", sz.name);
+        for (size_t i = 0; i < 5 && i < N; ++i) {
+            printf("%.2f ", static_cast<float>(output_f16[i]));
+        }
+        printf("| FP4: ");
+        for (size_t i = 0; i < 5 && i < N; ++i) {
+            printf("%.2f ", static_cast<float>(output_i32[i]));
+        }
+        printf("\n");
+
+        printf("  [%s] err: max=%.4f, p99=%.4f, p90=%.4f, p50=%.4f, mean=%.4f\n",
+               sz.name, max_err, p99, p90, p50, mean_err);
+        printf("  [%s] MSE=%.6f, CosSim=%.6f, PSNR=%.2fdB, failures=%d/%zu\n",
+               sz.name, mse, cos_sim, psnr, failures, N);
+
+        total_failures += failures;
     }
 
-    float mean_err = sum_err / static_cast<float>(N);
-    float mean_rel_err = sum_rel_err / static_cast<float>(N);
-    float mean_output = sum_output / static_cast<float>(N);
-    printf("  Output magnitude: max=%.4f, mean=%.4f\n", max_output, mean_output);
-    printf("  Absolute error: max=%.4f, mean=%.4f\n", max_err, mean_err);
-    printf("  Relative error: max=%.2f%%, mean=%.2f%%\n", max_rel_err * 100.0f, mean_rel_err * 100.0f);
-    printf("  Failures: %d/%zu (tolerance=%.2f)\n", failures, N, tolerance);
-
-    return failures == 0;
+    return total_failures == 0;
 }
 
 //==============================================================================
@@ -412,38 +435,48 @@ bool benchmark_gemv_comparison(TestUtils::TestRunner& runner) {
         {11008, 4096, "11008x4096"},
     };
 
+    // All 16 possible FP4 E2M1 values (for random selection)
+    float e2m1_values[16] = {
+        0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f,
+        -0.0f, -0.5f, -1.0f, -1.5f, -2.0f, -3.0f, -4.0f, -6.0f
+    };
+
     for (const auto& sz : sizes) {
         const size_t N = sz.N;
         const size_t K = sz.K;
         const size_t M = 1;
 
-        auto weights_f32 = TestUtils::create_test_data<float>(N * K);
-        auto input_f32 = TestUtils::create_test_data<float>(K);
+        // Generate random data directly from E2M1 values
+        std::mt19937 rng(42);
+        std::uniform_int_distribution<int> idx_dist(0, 15);
 
-        // Find max for scaling
-        float max_weight = 0.0f, max_input = 0.0f;
-        for (size_t i = 0; i < N * K; ++i) max_weight = std::max(max_weight, std::abs(weights_f32[i]));
-        for (size_t i = 0; i < K; ++i) max_input = std::max(max_input, std::abs(input_f32[i]));
+        std::vector<float> weights_f32(N * K);
+        std::vector<float> input_f32(K);
 
-        float fp4_weight_scale = max_weight / 6.0f;   // FP4 E2M1 max value is 6.0
-        float int8_weight_scale = max_weight / 127.0f;
-        float input_scale = max_input / 127.0f;
+        for (size_t i = 0; i < N * K; ++i) weights_f32[i] = e2m1_values[idx_dist(rng)];
+        for (size_t i = 0; i < K; ++i) input_f32[i] = e2m1_values[idx_dist(rng)];
 
         // Quantize and pack weights to FP4 E2M1 (2 values per byte)
         std::vector<uint8_t> weights_fp4_packed(N * K / 2);
         for (size_t row = 0; row < N; ++row) {
-            pack_fp4_array(&weights_f32[row * K], &weights_fp4_packed[row * K / 2], K, fp4_weight_scale);
+            pack_fp4_array(&weights_f32[row * K], &weights_fp4_packed[row * K / 2], K);
         }
 
         // Dequantize FP4 weights to FP16 for the FP16 baseline (same quantization loss)
         std::vector<__fp16> weights_f16_from_fp4(N * K);
         for (size_t row = 0; row < N; ++row) {
             std::vector<float> unpacked(K);
-            unpack_fp4_array(&weights_fp4_packed[row * K / 2], unpacked.data(), K, fp4_weight_scale);
+            unpack_fp4_array(&weights_fp4_packed[row * K / 2], unpacked.data(), K);
             for (size_t k = 0; k < K; ++k) {
                 weights_f16_from_fp4[row * K + k] = static_cast<__fp16>(unpacked[k]);
             }
         }
+
+        // INT8 scaling (for INT8 benchmark comparison)
+        float max_weight = 6.0f;  // max E2M1 value
+        float max_input = 6.0f;
+        float int8_weight_scale = max_weight / 127.0f;
+        float input_scale = max_input / 127.0f;
 
         // INT8 weights (full int8 range for comparison)
         std::vector<int8_t> weights_i8(N * K);
