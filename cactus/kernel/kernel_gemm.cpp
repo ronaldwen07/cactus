@@ -859,7 +859,7 @@ void cactus_matmul_int8_to_int32_i8mm(const int8_t* a, const int8_t* b_transpose
 
 #endif // __ARM_FEATURE_MATMUL_INT8
 
-static const int8x16_t fp4_lut_vec = {
+alignas(16) static const int8x16_t fp4_lut_vec = {
     0, 1, 2, 3, 4, 6, 8, 12,      // positive
     0, -1, -2, -3, -4, -6, -8, -12 // negative
 };
@@ -868,6 +868,14 @@ static const int8_t fp4_lut_scalar[16] = {
     0, 1, 2, 3, 4, 6, 8, 12,
     0, -1, -2, -3, -4, -6, -8, -12
 };
+
+static inline void load_f4_as_int8x16x2(const int8_t* ptr, int8x16_t& low_decoded, int8x16_t& high_decoded) {
+    uint8x16_t packed = vld1q_u8((const uint8_t*)ptr);
+    uint8x16_t low_fp4 = vandq_u8(packed, vdupq_n_u8(0x0F));
+    uint8x16_t high_fp4 = vshrq_n_u8(packed, 4);
+    low_decoded = vqtbl1q_s8(fp4_lut_vec, low_fp4);
+    high_decoded = vqtbl1q_s8(fp4_lut_vec, high_fp4);
+}
 
 static inline int8x16_t load_f4_as_int8x16(const int8_t* ptr) {
     uint8x8_t packed = vld1_u8((const uint8_t*)ptr);
@@ -902,8 +910,7 @@ static void cactus_matmul_f4_to_int32_worker(const int8_t* a, const int8_t* b_tr
                 for (int m = 0; m < TILE_M; ++m) {
                     size_t row = row_block + m;
                     if (row < M) {
-                        a_vec[0][m] = load_f4_as_int8x16(&a[(row * K + k_block) / 2]);
-                        a_vec[1][m] = load_f4_as_int8x16(&a[(row * K + k_block + VECTOR_WIDTH) / 2]);
+                        load_f4_as_int8x16x2(&a[(row * K + k_block) / 2], a_vec[0][m], a_vec[1][m]);
                     } else {
                         a_vec[0][m] = vdupq_n_s8(0);
                         a_vec[1][m] = vdupq_n_s8(0);
@@ -913,8 +920,7 @@ static void cactus_matmul_f4_to_int32_worker(const int8_t* a, const int8_t* b_tr
                 for (int n = 0; n < TILE_N; ++n) {
                     size_t col = col_block + n;
                     if (col < N) {
-                        b_vec[0][n] = load_f4_as_int8x16(&b_transposed[(col * K + k_block) / 2]);
-                        b_vec[1][n] = load_f4_as_int8x16(&b_transposed[(col * K + k_block + VECTOR_WIDTH) / 2]);
+                        load_f4_as_int8x16x2(&b_transposed[(col * K + k_block) / 2], b_vec[0][n], b_vec[1][n]);
                     } else {
                         b_vec[0][n] = vdupq_n_s8(0);
                         b_vec[1][n] = vdupq_n_s8(0);
@@ -1000,10 +1006,8 @@ void cactus_matmul_f4_to_int32(const int8_t* a, const int8_t* b_transposed, int3
                         for (int m = 0; m < MICRO_TILE_M; ++m) {
                             size_t row = row_block + m;
                             if (row < row_end) {
-                                a_vec[0][m] = load_f4_as_int8x16(&a[(row * K + k_block) / 2]);
-                                a_vec[1][m] = load_f4_as_int8x16(&a[(row * K + k_block + VECTOR_WIDTH) / 2]);
-                                a_vec[2][m] = load_f4_as_int8x16(&a[(row * K + k_block + VECTOR_WIDTH * 2) / 2]);
-                                a_vec[3][m] = load_f4_as_int8x16(&a[(row * K + k_block + VECTOR_WIDTH * 3) / 2]);
+                                load_f4_as_int8x16x2(&a[(row * K + k_block) / 2], a_vec[0][m], a_vec[1][m]);
+                                load_f4_as_int8x16x2(&a[(row * K + k_block + 2*VECTOR_WIDTH) / 2], a_vec[2][m], a_vec[3][m]);
                             } else {
                                 a_vec[0][m] = vdupq_n_s8(0);
                                 a_vec[1][m] = vdupq_n_s8(0);
@@ -1015,10 +1019,8 @@ void cactus_matmul_f4_to_int32(const int8_t* a, const int8_t* b_transposed, int3
                         for (int n = 0; n < MICRO_TILE_N; ++n) {
                             size_t col = col_block + n;
                             if (col < col_end) {
-                                b_vec[0][n] = load_f4_as_int8x16(&b_transposed[(col * K + k_block) / 2]);
-                                b_vec[1][n] = load_f4_as_int8x16(&b_transposed[(col * K + k_block + VECTOR_WIDTH) / 2]);
-                                b_vec[2][n] = load_f4_as_int8x16(&b_transposed[(col * K + k_block + VECTOR_WIDTH * 2) / 2]);
-                                b_vec[3][n] = load_f4_as_int8x16(&b_transposed[(col * K + k_block + VECTOR_WIDTH * 3) / 2]);
+                                load_f4_as_int8x16x2(&b_transposed[(col * K + k_block) / 2], b_vec[0][n], b_vec[1][n]);
+                                load_f4_as_int8x16x2(&b_transposed[(col * K + k_block + 2*VECTOR_WIDTH) / 2], b_vec[2][n], b_vec[3][n]);
                             } else {
                                 b_vec[0][n] = vdupq_n_s8(0);
                                 b_vec[1][n] = vdupq_n_s8(0);
