@@ -531,6 +531,119 @@ static void cactus_matmul_int8_to_int32_worker(const int8_t* a, const int8_t* b_
 #endif
 
 #if !defined(__ARM_FEATURE_MATMUL_INT8)
+void cactus_vector_matmul_int8_to_int32(const int8_t* a, const int8_t* b_transposed, int32_t* c,
+                                        size_t K, size_t N) {
+    size_t optimal_tile_m = std::min(CactusThreading::Thresholds::GEMM_TILE_M, (size_t) 2);
+    size_t optimal_tile_n = std::min(CactusThreading::Thresholds::GEMM_TILE_N, (N + 1) / 2 * 2);
+
+    size_t k_cache_footprint = K * sizeof(int8_t);
+    if (k_cache_footprint > CactusThreading::Thresholds::L2_CACHE_SIZE) {
+        optimal_tile_m = CactusThreading::Thresholds::GEMM_TILE_M_SMALL;
+        optimal_tile_n = CactusThreading::Thresholds::GEMM_TILE_N_SMALL;
+    }
+    
+    CactusThreading::parallel_for_2d_tiled(1, N, optimal_tile_m, optimal_tile_n,
+        [=](size_t row_start, size_t row_end, size_t col_start, size_t col_end) {
+            
+            constexpr int MICRO_TILE_N = 4;
+            constexpr int VECTOR_WIDTH = 16;
+            constexpr int VECTOR_UNROLL = 4;
+            const size_t K_aligned = (K / (VECTOR_WIDTH * VECTOR_UNROLL)) * (VECTOR_WIDTH * VECTOR_UNROLL);
+            
+            for (size_t row_block = row_start; row_block < row_end; ++row_block) {
+                for (size_t col_block = col_start; col_block < col_end; col_block += MICRO_TILE_N) {
+                    int32x4_t accumulators[MICRO_TILE_N];
+                    for (int n = 0; n < MICRO_TILE_N; ++n)
+                        accumulators[n] = vdupq_n_s32(0);
+
+                    for (size_t k_block = 0; k_block < K_aligned; k_block += VECTOR_WIDTH * VECTOR_UNROLL) {
+                        int8x16_t a_vec[VECTOR_UNROLL];
+                        int8x16_t b_vec[VECTOR_UNROLL][MICRO_TILE_N];
+
+                        a_vec[0] = vld1q_s8(&a[row_block * K + k_block]);
+                        a_vec[1] = vld1q_s8(&a[row_block * K + k_block + VECTOR_WIDTH]);
+                        a_vec[2] = vld1q_s8(&a[row_block * K + k_block + VECTOR_WIDTH * 2]);
+                        a_vec[3] = vld1q_s8(&a[row_block * K + k_block + VECTOR_WIDTH * 3]);
+
+
+                        for (int n = 0; n < MICRO_TILE_N; ++n) {
+                            size_t col = col_block + n;
+                            if (col < col_end) {
+                                b_vec[0][n] = vld1q_s8(&b_transposed[col * K + k_block]);
+                                b_vec[1][n] = vld1q_s8(&b_transposed[col * K + k_block + VECTOR_WIDTH]);
+                                b_vec[2][n] = vld1q_s8(&b_transposed[col * K + k_block + VECTOR_WIDTH * 2]);
+                                b_vec[3][n] = vld1q_s8(&b_transposed[col * K + k_block + VECTOR_WIDTH * 3]);
+                            } else {
+                                b_vec[0][n] = vdupq_n_s8(0);
+                                b_vec[1][n] = vdupq_n_s8(0);
+                                b_vec[2][n] = vdupq_n_s8(0);
+                                b_vec[3][n] = vdupq_n_s8(0);
+                            }
+                        }
+
+                        accumulators[0] = accum_i8mm(accumulators[0], a_vec[0], b_vec[0][0]);
+                        accumulators[1] = accum_i8mm(accumulators[1], a_vec[0], b_vec[0][1]);
+                        accumulators[2] = accum_i8mm(accumulators[2], a_vec[0], b_vec[0][2]);
+                        accumulators[3] = accum_i8mm(accumulators[3], a_vec[0], b_vec[0][3]);
+
+                        accumulators[0] = accum_i8mm(accumulators[0], a_vec[1], b_vec[1][0]);
+                        accumulators[1] = accum_i8mm(accumulators[1], a_vec[1], b_vec[1][1]);
+                        accumulators[2] = accum_i8mm(accumulators[2], a_vec[1], b_vec[1][2]);
+                        accumulators[3] = accum_i8mm(accumulators[3], a_vec[1], b_vec[1][3]);
+
+                        accumulators[0] = accum_i8mm(accumulators[0], a_vec[2], b_vec[2][0]);
+                        accumulators[1] = accum_i8mm(accumulators[1], a_vec[2], b_vec[2][1]);
+                        accumulators[2] = accum_i8mm(accumulators[2], a_vec[2], b_vec[2][2]);
+                        accumulators[3] = accum_i8mm(accumulators[3], a_vec[2], b_vec[2][3]);
+
+                        accumulators[0] = accum_i8mm(accumulators[0], a_vec[3], b_vec[3][0]);
+                        accumulators[1] = accum_i8mm(accumulators[1], a_vec[3], b_vec[3][1]);
+                        accumulators[2] = accum_i8mm(accumulators[2], a_vec[3], b_vec[3][2]);
+                        accumulators[3] = accum_i8mm(accumulators[3], a_vec[3], b_vec[3][3]);
+                    }
+
+                    for (size_t k_block = K_aligned; k_block < K; k_block += VECTOR_WIDTH) {
+                        size_t remaining = K - k_block;
+                        int8x16_t a_vec, b_vec[MICRO_TILE_N];
+
+                        if (remaining >= VECTOR_WIDTH) {
+                            a_vec = vld1q_s8(&a[row_block * K + k_block]);
+                        } else {
+                            int8_t tmp[VECTOR_WIDTH] = {};
+                            memcpy(tmp, &a[row_block * K + k_block], remaining);
+                            a_vec = vld1q_s8(tmp);
+                        }
+
+                        for (int n = 0; n < MICRO_TILE_N; ++n) {
+                            size_t col = col_block + n;
+                            if (col < col_end) {
+                                if (remaining >= VECTOR_WIDTH) {
+                                    b_vec[n] = vld1q_s8(&b_transposed[col * K + k_block]);
+                                } else {
+                                    int8_t tmp[VECTOR_WIDTH] = {};
+                                    memcpy(tmp, &b_transposed[col * K + k_block], remaining);
+                                    b_vec[n] = vld1q_s8(tmp);
+                                }
+                            } else {
+                                b_vec[n] = vdupq_n_s8(0);
+                            }
+                        }
+
+                        for (int n = 0; n < MICRO_TILE_N; ++n)
+                            accumulators[n] = accum_i8mm(accumulators[n], a_vec, b_vec[n]);
+                    }
+                    
+                    for (int n = 0; n < MICRO_TILE_N; ++n) {
+                        size_t col = col_block + n;
+                        if (col >= col_end) continue;
+                        int32_t sum = vaddvq_s32(accumulators[n]);
+                        c[row_block * N + col] = sum;
+                    }
+                }
+            }
+        });
+}
+
 void cactus_matmul_int8_to_int32(const int8_t* a, const int8_t* b_transposed, int32_t* c,
                                  size_t M, size_t K, size_t N) {
     if (M == 0) return;
@@ -541,8 +654,12 @@ void cactus_matmul_int8_to_int32(const int8_t* a, const int8_t* b_transposed, in
         cactus_matmul_int8_to_int32_worker(a, b_transposed, c, M, K, N, 0, M);
         return;
     }
+    if (M == 1) {
+        cactus_vector_matmul_int8_to_int32(a, b_transposed, c, K, N);
+        return;
+    }
     
-    size_t optimal_tile_m = std::min(CactusThreading::Thresholds::GEMM_TILE_M, (M + 1) / 2 * 2);
+    size_t optimal_tile_m = std::min(CactusThreading::Thresholds::GEMM_TILE_M, (M+ 1) / 2 * 2);
     size_t optimal_tile_n = std::min(CactusThreading::Thresholds::GEMM_TILE_N, (N + 1) / 2 * 2);
 
     size_t k_cache_footprint = K * sizeof(int8_t);
@@ -963,6 +1080,115 @@ static void cactus_matmul_f4_to_int32_worker(const int8_t* a, const int8_t* b_tr
     }
 }
 
+void cactus_vector_matmul_f4_to_int32(const int8_t* a, const int8_t* b_transposed, int32_t* c,
+                                 size_t K, size_t N) {
+    size_t optimal_tile_m = std::min(CactusThreading::Thresholds::GEMM_TILE_M, (size_t) 2);
+    size_t optimal_tile_n = std::min(CactusThreading::Thresholds::GEMM_TILE_N, (N + 1) / 2 * 2);
+
+    size_t k_cache_footprint = K * sizeof(int8_t);
+    if (k_cache_footprint > CactusThreading::Thresholds::L2_CACHE_SIZE) {
+        optimal_tile_m = CactusThreading::Thresholds::GEMM_TILE_M_SMALL;
+        optimal_tile_n = CactusThreading::Thresholds::GEMM_TILE_N_SMALL;
+    }
+    
+    CactusThreading::parallel_for_2d_tiled(1, N, optimal_tile_m, optimal_tile_n,
+        [=](size_t row_start, size_t row_end, size_t col_start, size_t col_end) {
+            
+            constexpr int MICRO_TILE_N = 4;
+            constexpr int VECTOR_WIDTH = 16;
+            constexpr int VECTOR_UNROLL = 4;
+            const size_t K_aligned = (K / (VECTOR_WIDTH * VECTOR_UNROLL)) * (VECTOR_WIDTH * VECTOR_UNROLL);
+            
+            for (size_t row_block = row_start; row_block < row_end; ++row_block) {
+                for (size_t col_block = col_start; col_block < col_end; col_block += MICRO_TILE_N) {
+                    int32x4_t accumulators [MICRO_TILE_N];
+                    for (int n = 0; n < MICRO_TILE_N; ++n)
+                        accumulators[n] = vdupq_n_s32(0);
+
+                    for (size_t k_block = 0; k_block < K_aligned; k_block += VECTOR_WIDTH * VECTOR_UNROLL) {
+                        int8x16_t a_vec[VECTOR_UNROLL];
+                        int8x16_t b_vec[VECTOR_UNROLL][MICRO_TILE_N];
+
+                        load_f4_as_int8x16x2(&a[(row_block * K + k_block) / 2], a_vec[0], a_vec[1]);
+                        load_f4_as_int8x16x2(&a[(row_block * K + k_block + 2*VECTOR_WIDTH) / 2], a_vec[2], a_vec[3]);
+
+                        for (int n = 0; n < MICRO_TILE_N; ++n) {
+                            size_t col = col_block + n;
+                            if (col < col_end) {
+                                load_f4_as_int8x16x2(&b_transposed[(col * K + k_block) / 2], b_vec[0][n], b_vec[1][n]);
+                                load_f4_as_int8x16x2(&b_transposed[(col * K + k_block + 2*VECTOR_WIDTH) / 2], b_vec[2][n], b_vec[3][n]);
+                            } else {
+                                b_vec[0][n] = vdupq_n_s8(0);
+                                b_vec[1][n] = vdupq_n_s8(0);
+                                b_vec[2][n] = vdupq_n_s8(0);
+                                b_vec[3][n] = vdupq_n_s8(0);
+                            }
+                        }
+
+                        accumulators[0] = accum_i8mm(accumulators[0], a_vec[0], b_vec[0][0]);
+                        accumulators[1] = accum_i8mm(accumulators[1], a_vec[0], b_vec[0][1]);
+                        accumulators[2] = accum_i8mm(accumulators[2], a_vec[0], b_vec[0][2]);
+                        accumulators[3] = accum_i8mm(accumulators[3], a_vec[0], b_vec[0][3]);
+
+                        accumulators[0] = accum_i8mm(accumulators[0], a_vec[1], b_vec[1][0]);
+                        accumulators[1] = accum_i8mm(accumulators[1], a_vec[1], b_vec[1][1]);
+                        accumulators[2] = accum_i8mm(accumulators[2], a_vec[1], b_vec[1][2]);
+                        accumulators[3] = accum_i8mm(accumulators[3], a_vec[1], b_vec[1][3]);
+
+                        accumulators[0] = accum_i8mm(accumulators[0], a_vec[2], b_vec[2][0]);
+                        accumulators[1] = accum_i8mm(accumulators[1], a_vec[2], b_vec[2][1]);
+                        accumulators[2] = accum_i8mm(accumulators[2], a_vec[2], b_vec[2][2]);
+                        accumulators[3] = accum_i8mm(accumulators[3], a_vec[2], b_vec[2][3]);
+
+                        accumulators[0] = accum_i8mm(accumulators[0], a_vec[3], b_vec[3][0]);
+                        accumulators[1] = accum_i8mm(accumulators[1], a_vec[3], b_vec[3][1]);
+                        accumulators[2] = accum_i8mm(accumulators[2], a_vec[3], b_vec[3][2]);
+                        accumulators[3] = accum_i8mm(accumulators[3], a_vec[3], b_vec[3][3]);
+                    }
+
+                    for (size_t k_block = K_aligned; k_block < K; k_block += VECTOR_WIDTH) {
+                        size_t remaining = K - k_block;
+                        int8x16_t a_vec, b_vec[MICRO_TILE_N];
+
+                        if (remaining >= VECTOR_WIDTH) {
+                            a_vec = load_f4_as_int8x16(&a[(row_block * K + k_block) / 2]);
+                        } else {
+                            int8_t tmp[8] = {};
+                            size_t packed_bytes = (remaining + 1) / 2;
+                            memcpy(tmp, &a[(row_block * K + k_block) / 2], packed_bytes);
+                            a_vec = load_f4_as_int8x16(tmp);
+                        }
+
+                        for (int n = 0; n < MICRO_TILE_N; ++n) {
+                            size_t col = col_block + n;
+                            if (col < col_end) {
+                                if (remaining >= VECTOR_WIDTH) {
+                                    b_vec[n] = load_f4_as_int8x16(&b_transposed[(col * K + k_block) / 2]);
+                                } else {
+                                    int8_t tmp[8] = {};
+                                    size_t packed_bytes = (remaining + 1) / 2;
+                                    memcpy(tmp, &b_transposed[(col * K + k_block) / 2], packed_bytes);
+                                    b_vec[n] = load_f4_as_int8x16(tmp);
+                                }
+                            } else {
+                                b_vec[n] = vdupq_n_s8(0);
+                            }
+                        }
+
+                        for (int n = 0; n < MICRO_TILE_N; ++n)
+                            accumulators[n] = accum_i8mm(accumulators[n], a_vec, b_vec[n]);
+                    }
+                    
+                    for (int n = 0; n < MICRO_TILE_N; ++n) {
+                        size_t col = col_block + n;
+                        if (col >= col_end) continue;
+                        c[row_block * N + col] = vaddvq_s32(accumulators[n]);
+                    }
+                }
+            }
+        });
+}
+
 void cactus_matmul_f4_to_int32(const int8_t* a, const int8_t* b_transposed, int32_t* c,
                                  size_t M, size_t K, size_t N) {
     if (M == 0) return;
@@ -971,6 +1197,10 @@ void cactus_matmul_f4_to_int32(const int8_t* a, const int8_t* b_transposed, int3
 
     if (num_threads == 1) {
         cactus_matmul_f4_to_int32_worker(a, b_transposed, c, M, K, N, 0, M);
+        return;
+    }
+    if (M == 1) {
+        cactus_vector_matmul_f4_to_int32(a, b_transposed, c, K, N);
         return;
     }
     

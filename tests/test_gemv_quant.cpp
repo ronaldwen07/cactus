@@ -292,10 +292,10 @@ bool test_fp4_larger_sizes() {
 bool test_fp4_correctness() {
     struct TestSize { size_t N; size_t K; const char* name; };
     std::vector<TestSize> sizes = {
-        {1024, 1024, "1024x1024"},
-        {4096, 4096, "4096x4096"},
-        {4096, 11008, "4096x11008"},
-        {11008, 4096, "11008x4096"},
+        {1024, 1024, "(1024, 1024) x (1024, 1)"},
+        {4096, 4096, "(4096, 4096) x (4096, 1)"},
+        {4096, 11008, "(4096, 11008) x (11008, 1)"},
+        {11008, 4096, "(11008, 4096) x (4096, 1)"},
     };
 
     const size_t M = 1;
@@ -434,10 +434,10 @@ bool test_fp4_correctness() {
 bool benchmark_gemv_comparison(TestUtils::TestRunner& runner) {
     struct BenchSize { size_t N; size_t K; const char* name; };
     std::vector<BenchSize> sizes = {
-        {1024, 1024, "1024x1024"},
-        {4096, 4096, "4096x4096"},
-        {4096, 11008, "4096x11008"},
-        {11008, 4096, "11008x4096"},
+        {1024, 1024, "(1024, 1024) x (1024, 1)"},
+        {4096, 4096, "(4096, 4096) x (4096, 1)"},
+        {4096, 11008, "(4096, 11008) x (11008, 1)"},
+        {11008, 4096, "(11008, 4096) x (4096, 1)"},
     };
 
     // All 16 possible FP4 E2M1 values (for random selection)
@@ -510,7 +510,7 @@ bool benchmark_gemv_comparison(TestUtils::TestRunner& runner) {
             });
             double gflops = flops / (time * 1e6);
             snprintf(perf_str, sizeof(perf_str), "%.3f ms, %.2f GFLOPS", time, gflops);
-            runner.log_performance(std::string("FP16 (") + sz.name + ")", perf_str);
+            runner.log_performance(std::string("FP16 ") + sz.name, perf_str);
         }
 
         // INT8
@@ -520,7 +520,7 @@ bool benchmark_gemv_comparison(TestUtils::TestRunner& runner) {
             });
             double gflops = flops / (time * 1e6);
             snprintf(perf_str, sizeof(perf_str), "%.3f ms, %.2f GFLOPS", time, gflops);
-            runner.log_performance(std::string("INT8 (") + sz.name + ")", perf_str);
+            runner.log_performance(std::string("INT8 ") + sz.name, perf_str);
         }
 
         // FP4 (using packed FP4 E2M1 weights - 2 values per byte)
@@ -533,7 +533,7 @@ bool benchmark_gemv_comparison(TestUtils::TestRunner& runner) {
             cactus_int32_to_fp16_scaled(output_i32_fp4.data(), output_fp4.data(), N, 0.25f);
             double gflops = flops / (time * 1e6);
             snprintf(perf_str, sizeof(perf_str), "%.3f ms, %.2f GFLOPS", time, gflops);
-            runner.log_performance(std::string("FP4 (") + sz.name + ")", perf_str);
+            runner.log_performance(std::string("FP4 ") + sz.name, perf_str);
         }
 
         printf("\n");
