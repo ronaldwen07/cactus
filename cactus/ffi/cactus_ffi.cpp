@@ -16,6 +16,27 @@
 using namespace cactus::engine;
 using namespace cactus::ffi;
 
+static constexpr size_t WHISPER_TARGET_FRAMES = 3000;
+static constexpr int WHISPER_SAMPLE_RATE = 16000;
+
+static AudioProcessor::SpectrogramConfig get_whisper_spectrogram_config() {
+    AudioProcessor::SpectrogramConfig cfg{};
+    cfg.n_fft        = 400;
+    cfg.frame_length = 400;
+    cfg.hop_length   = 160;
+    cfg.power        = 2.0f;
+    cfg.center       = true;
+    cfg.pad_mode     = "reflect";
+    cfg.onesided     = true;
+    cfg.dither       = 0.0f;
+    cfg.mel_floor    = 1e-10f;
+    cfg.log_mel      = "log10";
+    cfg.reference    = 1.0f;
+    cfg.min_value    = 1e-10f;
+    cfg.remove_dc_offset = true;
+    return cfg;
+}
+
 struct CactusModelHandle {
     std::unique_ptr<Model> model;
     std::atomic<bool> should_stop;
@@ -67,26 +88,13 @@ static std::vector<float> compute_whisper_mel_from_pcm(
         return {};
     }
 
-    AudioProcessor::SpectrogramConfig cfg{};
-    cfg.n_fft        = 400;
-    cfg.frame_length = 400;
-    cfg.hop_length   = 160;
-    cfg.power        = 2.0f;
-    cfg.center       = true;
-    cfg.pad_mode     = "reflect";
-    cfg.onesided     = true;
-    cfg.dither       = 0.0f;
-    cfg.mel_floor    = 1e-10f;
-    cfg.log_mel      = "log10";
-    cfg.reference    = 1.0f;
-    cfg.min_value    = 1e-10f;
-    cfg.remove_dc_offset = true;
+    AudioProcessor::SpectrogramConfig cfg = get_whisper_spectrogram_config();
 
     const size_t num_mel_filters = 80;
     const size_t num_frequency_bins = cfg.n_fft / 2 + 1;
 
     AudioProcessor ap;
-    ap.init_mel_filters(num_frequency_bins, num_mel_filters, 0.0f, 8000.0f, 16000);
+    ap.init_mel_filters(num_frequency_bins, num_mel_filters, 0.0f, 8000.0f, WHISPER_SAMPLE_RATE);
 
     std::vector<float> mel = ap.compute_spectrogram(waveform_16k, cfg);
 
@@ -108,14 +116,13 @@ static std::vector<float> compute_whisper_mel_from_pcm(
         v = (v + 4.0f) / 4.0f;
     }
 
-    const size_t target_frames = 3000;
-    if (n_frames != target_frames) {
-        std::vector<float> fixed(n_mels * target_frames, 0.0f);
+    if (n_frames != WHISPER_TARGET_FRAMES) {
+        std::vector<float> fixed(n_mels * WHISPER_TARGET_FRAMES, 0.0f);
 
-        size_t copy_frames = std::min(n_frames, target_frames);
+        size_t copy_frames = std::min(n_frames, WHISPER_TARGET_FRAMES);
         for (size_t m = 0; m < n_mels; ++m) {
             const float* src = &mel[m * n_frames];
-            float* dst = &fixed[m * target_frames];
+            float* dst = &fixed[m * WHISPER_TARGET_FRAMES];
             std::copy(src, src + copy_frames, dst);
         }
 
@@ -130,26 +137,13 @@ static std::vector<float> compute_whisper_mel_from_wav(const std::string& wav_pa
     AudioFP32 audio = load_wav(wav_path);
     std::vector<float> waveform_16k = resample_to_16k_fp32(audio.samples, audio.sample_rate);
 
-    AudioProcessor::SpectrogramConfig cfg{};
-    cfg.n_fft        = 400;
-    cfg.frame_length = 400;
-    cfg.hop_length   = 160;
-    cfg.power        = 2.0f;
-    cfg.center       = true;
-    cfg.pad_mode     = "reflect";
-    cfg.onesided     = true;
-    cfg.dither       = 0.0f;
-    cfg.mel_floor    = 1e-10f;
-    cfg.log_mel      = "log10";      // <- IMPORTANT: log10, NOT "dB"
-    cfg.reference    = 1.0f;
-    cfg.min_value    = 1e-10f;
-    cfg.remove_dc_offset = true;
+    AudioProcessor::SpectrogramConfig cfg = get_whisper_spectrogram_config();
 
     const size_t num_mel_filters = 80;
     const size_t num_frequency_bins = cfg.n_fft / 2 + 1;
 
     AudioProcessor ap;
-    ap.init_mel_filters(num_frequency_bins,num_mel_filters,0.0f,8000.0f,16000);
+    ap.init_mel_filters(num_frequency_bins, num_mel_filters, 0.0f, 8000.0f, WHISPER_SAMPLE_RATE);
 
     std::vector<float> mel = ap.compute_spectrogram(waveform_16k, cfg);
 
@@ -171,14 +165,13 @@ static std::vector<float> compute_whisper_mel_from_wav(const std::string& wav_pa
         v = (v + 4.0f) / 4.0f;
     }
 
-    const size_t target_frames = 3000;
-    if (n_frames != target_frames) {
-        std::vector<float> fixed(n_mels * target_frames, 0.0f);
+    if (n_frames != WHISPER_TARGET_FRAMES) {
+        std::vector<float> fixed(n_mels * WHISPER_TARGET_FRAMES, 0.0f);
 
-        size_t copy_frames = std::min(n_frames, target_frames);
+        size_t copy_frames = std::min(n_frames, WHISPER_TARGET_FRAMES);
         for (size_t m = 0; m < n_mels; ++m) {
             const float* src = &mel[m * n_frames];
-            float* dst = &fixed[m * target_frames];
+            float* dst = &fixed[m * WHISPER_TARGET_FRAMES];
             std::copy(src, src + copy_frames, dst);
         }
 
@@ -268,6 +261,18 @@ int cactus_transcribe(
         return -1;
     }
 
+    if (audio_file_path && pcm_buffer && pcm_buffer_size > 0) {
+        handle_error_response("Cannot provide both audio_file_path and pcm_buffer; use only one input source", response_buffer, buffer_size);
+        return -1;
+    }
+
+    if (pcm_buffer && pcm_buffer_size > 0) {
+        if (pcm_buffer_size < 2 || pcm_buffer_size % 2 != 0) {
+            handle_error_response("pcm_buffer_size must be even and at least 2 bytes (one int16_t sample)", response_buffer, buffer_size);
+            return -1;
+        }
+    }
+
     try {
         auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -287,7 +292,7 @@ int cactus_transcribe(
         if (audio_file_path == nullptr) {
             const int16_t* pcm_samples = reinterpret_cast<const int16_t*>(pcm_buffer);
             size_t num_samples = pcm_buffer_size / 2;
-            mel_bins = compute_whisper_mel_from_pcm(pcm_samples, num_samples, 16000);
+            mel_bins = compute_whisper_mel_from_pcm(pcm_samples, num_samples, WHISPER_SAMPLE_RATE);
         } else {
             mel_bins = compute_whisper_mel_from_wav(audio_file_path);
         }
