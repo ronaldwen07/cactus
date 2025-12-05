@@ -659,7 +659,7 @@ void cactus_matmul_int8_to_int32(const int8_t* a, const int8_t* b_transposed, in
         return;
     }
     
-    size_t optimal_tile_m = std::min(CactusThreading::Thresholds::GEMM_TILE_M, (M+ 1) / 2 * 2);
+    size_t optimal_tile_m = std::min(CactusThreading::Thresholds::GEMM_TILE_M, (M + 1) / 2 * 2);
     size_t optimal_tile_n = std::min(CactusThreading::Thresholds::GEMM_TILE_N, (N + 1) / 2 * 2);
 
     size_t k_cache_footprint = K * sizeof(int8_t);
