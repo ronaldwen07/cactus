@@ -20,6 +20,7 @@ struct CactusModelHandle {
     std::unique_ptr<Model> model;
     std::atomic<bool> should_stop;
     std::vector<uint32_t> processed_tokens;
+    std::mutex model_mutex;
 
     CactusModelHandle() : should_stop(false) {}
 };
@@ -271,6 +272,9 @@ int cactus_transcribe(
         auto start_time = std::chrono::high_resolution_clock::now();
 
         auto* handle = static_cast<CactusModelHandle*>(model);
+        
+        std::lock_guard<std::mutex> lock(handle->model_mutex);
+        
         handle->should_stop = false;
 
         float temperature, top_p;
