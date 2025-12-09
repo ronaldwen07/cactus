@@ -2,7 +2,7 @@
 
 # iOS test runner script
 # Called from tests/run.sh with --ios flag
-# Handles: library building, device selection, Xcode build, and test execution
+# Handles: device selection, Xcode project configuration, app build, and test execution
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -10,14 +10,6 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # Model names passed from parent run.sh
 MODEL_NAME="$1"
 TRANSCRIBE_MODEL_NAME="$2"
-
-echo ""
-echo "Step 2: Building iOS static libraries..."
-cd "$PROJECT_ROOT"
-if ! BUILD_STATIC=true BUILD_XCFRAMEWORK=false apple/build.sh; then
-    echo "Failed to build iOS static libraries"
-    exit 1
-fi
 
 # Validate Xcode installation
 if [ ! -d "/Applications/Xcode.app" ]; then
@@ -45,7 +37,7 @@ if ! command -v xcodebuild >/dev/null 2>&1; then
 fi
 
 echo ""
-echo "Step 3: Selecting iOS device..."
+echo "Step 2: Selecting iOS device..."
 
 # Collect available simulators
 SIMULATORS=$(xcrun simctl list devices available 2>/dev/null | grep -E "^\s+(iPhone|iPad)" | grep -v "unavailable" | sed 's/^[[:space:]]*//' | while read line; do
@@ -186,12 +178,11 @@ if [ "$DEVICE_TYPE" = "device" ]; then
 fi
 
 echo ""
-echo "Step 4: Configuring Xcode project..."
+echo "Step 3: Configuring Xcode project..."
 
 XCODEPROJ_PATH="$SCRIPT_DIR/CactusTest/CactusTest.xcodeproj"
 TESTS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CACTUS_ROOT="$PROJECT_ROOT/cactus"
-APPLE_ROOT="$PROJECT_ROOT/apple"
 
 if ! command -v ruby &> /dev/null; then
     echo ""
@@ -208,7 +199,7 @@ if ! gem list xcodeproj -i &> /dev/null; then
     fi
 fi
 
-export PROJECT_ROOT TESTS_ROOT CACTUS_ROOT APPLE_ROOT XCODEPROJ_PATH
+export PROJECT_ROOT TESTS_ROOT CACTUS_ROOT XCODEPROJ_PATH
 if ! ruby "$SCRIPT_DIR/setup_project.rb" > /dev/null; then
     echo ""
     echo "Error: Failed to setup Xcode project"
@@ -216,7 +207,7 @@ if ! ruby "$SCRIPT_DIR/setup_project.rb" > /dev/null; then
 fi
 
 echo ""
-echo "Step 5: Building iOS test application..."
+echo "Step 4: Building iOS test application..."
 
 if [ "$DEVICE_TYPE" = "simulator" ]; then
     IOS_SIM_SDK_PATH=$(xcrun --sdk iphonesimulator --show-sdk-path 2>/dev/null)
@@ -287,7 +278,7 @@ if ! cp -R "$TRANSCRIBE_MODEL_SRC" "$APP_PATH/" 2>/dev/null; then
 fi
 
 echo ""
-echo "Step 6: Running tests..."
+echo "Step 5: Running tests..."
 echo "------------------------"
 
 BUNDLE_ID="cactus.CactusTest"
