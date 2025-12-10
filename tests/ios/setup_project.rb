@@ -77,6 +77,8 @@ project_root = ENV['PROJECT_ROOT']
 tests_root = ENV['TESTS_ROOT']
 cactus_root = ENV['CACTUS_ROOT']
 project_path = ENV['XCODEPROJ_PATH']
+bundle_id = ENV['BUNDLE_ID']
+team_id = ENV['DEVELOPMENT_TEAM']
 
 fail_with("PROJECT_ROOT not set") unless project_root
 fail_with("TESTS_ROOT not set") unless tests_root
@@ -160,6 +162,8 @@ target.build_configurations.each do |config|
   config.build_settings['CLANG_CXX_LIBRARY'] = 'libc++'
   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
   config.build_settings['CODE_SIGN_STYLE'] = 'Automatic'
+  config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = bundle_id if bundle_id
+  config.build_settings['DEVELOPMENT_TEAM'] = team_id if team_id
 
   # Remove storyboard references (headless test app)
   config.build_settings.delete('INFOPLIST_KEY_UILaunchStoryboardName')

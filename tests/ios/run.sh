@@ -18,19 +18,19 @@ if [ ! -d "/Applications/Xcode.app" ]; then
     exit 1
 fi
 
-if ! xcode-select -p >/dev/null 2>&1; then
+if ! xcode-select -p; then
     echo ""
     echo "Error: Xcode Command Line Tools not installed"
     exit 1
 fi
 
-if ! /usr/bin/xcrun --version >/dev/null 2>&1; then
+if ! /usr/bin/xcrun --version; then
     echo ""
     echo "Error: Xcode license not accepted"
     exit 1
 fi
 
-if ! command -v xcodebuild >/dev/null 2>&1; then
+if ! command -v xcodebuild; then
     echo ""
     echo "Error: xcodebuild not found"
     exit 1
@@ -40,7 +40,7 @@ echo ""
 echo "Step 2: Selecting iOS device..."
 
 # Collect available simulators
-SIMULATORS=$(xcrun simctl list devices available 2>/dev/null | grep -E "^\s+(iPhone|iPad)" | grep -v "unavailable" | sed 's/^[[:space:]]*//' | while read line; do
+SIMULATORS=$(xcrun simctl list devices available | grep -E "^\s+(iPhone|iPad)" | grep -v "unavailable" | sed 's/^[[:space:]]*//' | while read line; do
     uuid=$(echo "$line" | grep -oE '\([A-F0-9-]{36}\)' | head -1 | tr -d '()')
     if [ -n "$uuid" ]; then
         name=$(echo "$line" | sed -E 's/ \([^)]*\)//g' | xargs)
@@ -153,28 +153,17 @@ else
     fi
 fi
 
-# Setup code signing for physical devices
-if [ "$DEVICE_TYPE" = "device" ]; then
+# Verify certificates exist for physical devices
+if [ "$DEVICE_TYPE" = "device" ] && ! security find-identity -v -p codesigning | grep -q "Apple Development"; then
     echo ""
-    echo "Checking for development certificates..."
-
-    if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "Apple Development"; then
-        echo ""
-        echo "Error: No development certificates found"
-        echo ""
-        echo "To fix this:"
-        echo "  1. Open Xcode"
-        echo "  2. Go to Settings > Accounts"
-        echo "  3. Add your Apple ID"
-        echo "  4. Download development certificates"
-        exit 1
-    fi
-
-    CERT_SUBJECT=$(security find-certificate -a -c "Apple Development" -p | openssl x509 -subject -noout)
-    TEAM_ID=$(echo "$CERT_SUBJECT" | grep -oE 'OU=[A-Z0-9]{10}' | cut -d= -f2)
-    TEAM_NAME=$(echo "$CERT_SUBJECT" | sed -E 's/.*CN=Apple Development: ([^,]+).*/\1/' | sed -E 's/ \([A-Z0-9]{10}\)$//')
-
-    echo "Found certificate: $TEAM_NAME (Team ID: $TEAM_ID)"
+    echo "Error: No development certificates found"
+    echo ""
+    echo "To fix this:"
+    echo "  1. Open Xcode"
+    echo "  2. Go to Settings > Accounts"
+    echo "  3. Add your Apple ID"
+    echo "  4. Download development certificates"
+    exit 1
 fi
 
 echo ""
@@ -184,23 +173,38 @@ XCODEPROJ_PATH="$SCRIPT_DIR/CactusTest/CactusTest.xcodeproj"
 TESTS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CACTUS_ROOT="$PROJECT_ROOT/cactus"
 
-if ! command -v ruby &> /dev/null; then
+# Configure bundle ID and team for physical devices
+BUNDLE_ID="com.cactus.test.${USER}"
+echo "Using Bundle ID: $BUNDLE_ID"
+
+
+if [ "$DEVICE_TYPE" = "device" ]; then
+    DEVELOPMENT_TEAM=$(security find-certificate -a -c "Apple Development" -p | openssl x509 -noout -subject | grep -oE 'OU=[A-Z0-9]{10}' | head -1 | cut -d= -f2)
+    if [ -z "$DEVELOPMENT_TEAM" ]; then
+        echo ""
+        echo "Error: Could not extract Team ID from certificate"
+        exit 1
+    fi
+    echo "Using Team ID: $DEVELOPMENT_TEAM"
+fi
+
+if ! command -v ruby; then
     echo ""
     echo "Error: Ruby not found. Please install Ruby."
     exit 1
 fi
 
-if ! gem list xcodeproj -i &> /dev/null; then
+if ! gem list xcodeproj -i; then
     echo "   Installing xcodeproj gem..."
-    if ! gem install xcodeproj > /dev/null 2>&1; then
+    if ! gem install xcodeproj; then
         echo ""
         echo "Error: Failed to install xcodeproj gem"
         exit 1
     fi
 fi
 
-export PROJECT_ROOT TESTS_ROOT CACTUS_ROOT XCODEPROJ_PATH
-if ! ruby "$SCRIPT_DIR/setup_project.rb" > /dev/null; then
+export PROJECT_ROOT TESTS_ROOT CACTUS_ROOT XCODEPROJ_PATH BUNDLE_ID DEVELOPMENT_TEAM
+if ! ruby "$SCRIPT_DIR/setup_project.rb"; then
     echo ""
     echo "Error: Failed to setup Xcode project"
     exit 1
@@ -210,7 +214,7 @@ echo ""
 echo "Step 4: Building iOS test application..."
 
 if [ "$DEVICE_TYPE" = "simulator" ]; then
-    IOS_SIM_SDK_PATH=$(xcrun --sdk iphonesimulator --show-sdk-path 2>/dev/null)
+    IOS_SIM_SDK_PATH=$(xcrun --sdk iphonesimulator --show-sdk-path)
     if [ -z "$IOS_SIM_SDK_PATH" ] || [ ! -d "$IOS_SIM_SDK_PATH" ]; then
         echo ""
         echo "Error: iOS Simulator SDK not found"
@@ -226,7 +230,8 @@ if [ "$DEVICE_TYPE" = "simulator" ]; then
          ONLY_ACTIVE_ARCH=NO \
          IPHONEOS_DEPLOYMENT_TARGET=13.0 \
          SDKROOT="$IOS_SIM_SDK_PATH" \
-         build > /dev/null 2>&1; then
+         PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+         build; then
         echo ""
         echo "Error: Build failed"
         exit 1
@@ -234,7 +239,7 @@ if [ "$DEVICE_TYPE" = "simulator" ]; then
 
     APP_PATH="$SCRIPT_DIR/build/Build/Products/Release-iphonesimulator/CactusTest.app"
 else
-    IOS_SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path 2>/dev/null)
+    IOS_SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
     if [ -z "$IOS_SDK_PATH" ] || [ ! -d "$IOS_SDK_PATH" ]; then
         echo ""
         echo "Error: iOS SDK not found"
@@ -251,10 +256,9 @@ else
          ONLY_ACTIVE_ARCH=NO \
          IPHONEOS_DEPLOYMENT_TARGET=13.0 \
          SDKROOT="$IOS_SDK_PATH" \
-         DEVELOPMENT_TEAM="$TEAM_ID" \
-         CODE_SIGN_IDENTITY="Apple Development" \
+         PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
          CODE_SIGN_STYLE="Automatic" \
-         build > /dev/null 2>&1; then
+         build; then
         echo ""
         echo "Error: Build failed"
         exit 1
@@ -270,10 +274,10 @@ TRANSCRIBE_MODEL_SRC="$PROJECT_ROOT/weights/$TRANSCRIBE_MODEL_DIR"
 
 echo ""
 echo "Copying model weights to app bundle..."
-if ! cp -R "$MODEL_SRC" "$APP_PATH/" 2>/dev/null; then
+if ! cp -R "$MODEL_SRC" "$APP_PATH/"; then
     echo "Warning: Could not copy model weights"
 fi
-if ! cp -R "$TRANSCRIBE_MODEL_SRC" "$APP_PATH/" 2>/dev/null; then
+if ! cp -R "$TRANSCRIBE_MODEL_SRC" "$APP_PATH/"; then
     echo "Warning: Could not copy transcribe model weights"
 fi
 
@@ -281,15 +285,12 @@ echo ""
 echo "Step 5: Running tests..."
 echo "------------------------"
 
-BUNDLE_ID="cactus.CactusTest"
-
 if [ "$DEVICE_TYPE" = "simulator" ]; then
     echo "Installing on: $DEVICE_NAME"
 
-    xcrun simctl boot "$DEVICE_UUID" 2>/dev/null || true
-    xcrun simctl uninstall "$DEVICE_UUID" "$BUNDLE_ID" 2>/dev/null || true
+    xcrun simctl boot "$DEVICE_UUID" || true
 
-    if ! xcrun simctl install "$DEVICE_UUID" "$APP_PATH" 2>/dev/null; then
+    if ! xcrun simctl install "$DEVICE_UUID" "$APP_PATH"; then
         echo ""
         echo "Error: Failed to install app on simulator"
         exit 1
@@ -299,15 +300,15 @@ if [ "$DEVICE_TYPE" = "simulator" ]; then
 
     SIMCTL_CHILD_CACTUS_TEST_MODEL="$MODEL_DIR" \
     SIMCTL_CHILD_CACTUS_TEST_TRANSCRIBE_MODEL="$TRANSCRIBE_MODEL_DIR" \
-    xcrun simctl launch --console-pty "$DEVICE_UUID" "$BUNDLE_ID" 2>/dev/null
+    xcrun simctl launch --console-pty "$DEVICE_UUID" "$BUNDLE_ID"
 
     echo ""
 else
     echo "Installing on: $DEVICE_NAME"
 
-    xcrun devicectl device uninstall app --device "$DEVICE_UUID" "$BUNDLE_ID" 2>/dev/null || true
+    xcrun devicectl device uninstall app --device "$DEVICE_UUID" "$BUNDLE_ID" || true
 
-    if ! xcrun devicectl device install app --device "$DEVICE_UUID" "$APP_PATH" 2>/dev/null; then
+    if ! xcrun devicectl device install app --device "$DEVICE_UUID" "$APP_PATH"; then
         echo ""
         echo "Error: Failed to install app on device"
         echo "Common issues: device not trusted, code signing failed, or device locked"
@@ -319,13 +320,13 @@ else
 
     DEVICECTL_CHILD_CACTUS_TEST_MODEL="$MODEL_DIR" \
     DEVICECTL_CHILD_CACTUS_TEST_TRANSCRIBE_MODEL="$TRANSCRIBE_MODEL_DIR" \
-    xcrun devicectl device process launch --device "$DEVICE_UUID" "$BUNDLE_ID" 2>/dev/null || true
+    xcrun devicectl device process launch --device "$DEVICE_UUID" "$BUNDLE_ID" || true
 
     # Wait for process to complete (poll every 2s, max 5 minutes)
     MAX_WAIT=300
     ELAPSED=0
     while [ $ELAPSED -lt $MAX_WAIT ]; do
-        if xcrun devicectl device info processes --device "$DEVICE_UUID" 2>/dev/null | grep -q "CactusTest.app/CactusTest"; then
+        if xcrun devicectl device info processes --device "$DEVICE_UUID" | grep -q "CactusTest.app/CactusTest"; then
             sleep 2
             ELAPSED=$((ELAPSED + 2))
         else
@@ -349,7 +350,7 @@ else
         --source "Documents/cactus_test.log" \
         --destination "$TEMP_LOG_FILE" \
         --domain-type appDataContainer \
-        --domain-identifier "$BUNDLE_ID" 2>/dev/null; then
+        --domain-identifier "$BUNDLE_ID"; then
 
         if [ -f "$TEMP_LOG_FILE" ]; then
             echo ""
