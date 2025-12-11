@@ -19,16 +19,13 @@ set(TESTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
 file(GLOB TEST_SOURCES "${TESTS_DIR}/test*.cpp")
 list(REMOVE_ITEM TEST_SOURCES "${TESTS_DIR}/test_utils.cpp")
 
-
 foreach(TEST_FILE ${TEST_SOURCES})
     get_filename_component(TEST_NAME ${TEST_FILE} NAME_WE)
-
     add_executable(${TEST_NAME}
         ${TEST_FILE}
         ${TESTS_DIR}/test_utils.cpp
     )
-
-    target_link_libraries(${TEST_NAME} PRIVATE ${CACTUS_LIB} log)
+    target_link_libraries(${TEST_NAME} PRIVATE ${CACTUS_LIB})
     target_include_directories(${TEST_NAME} PRIVATE ${CACTUS_ROOT})
     message(STATUS "Added Android test: ${TEST_NAME}")
 endforeach()
