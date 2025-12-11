@@ -15,15 +15,12 @@ extern int test_performance_main();
 
 - (void)copyModelFromBundle:(NSString *)bundlePath toDocuments:(const char *)modelDir {
     if (!modelDir) return;
-
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSString *modelName = [NSString stringWithUTF8String:modelDir];
     NSString *sourceModelPath = [NSString stringWithFormat:@"%@/%@", bundlePath, modelName];
-
     if ([fileManager fileExistsAtPath:modelName]) {
         [fileManager removeItemAtPath:modelName error:nil];
     }
-
     [fileManager copyItemAtPath:sourceModelPath toPath:modelName error:nil];
 }
 

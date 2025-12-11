@@ -6,7 +6,6 @@ def fail_with(message)
   exit 1
 end
 
-# Generate AppDelegate.mm with auto-discovered test functions
 def generate_app_delegate(output_path, test_files)
   test_names = test_files.map { |f| File.basename(f, '.cpp') }
   extern_declarations = test_names.map { |name| "extern int #{name}_main();" }.join("\n")
@@ -26,15 +25,12 @@ def generate_app_delegate(output_path, test_files)
 
     - (void)copyModelFromBundle:(NSString *)bundlePath toDocuments:(const char *)modelDir {
         if (!modelDir) return;
-
         NSFileManager *fileManager = [NSFileManager defaultManager];
         NSString *modelName = [NSString stringWithUTF8String:modelDir];
         NSString *sourceModelPath = [NSString stringWithFormat:@"%@/%@", bundlePath, modelName];
-
         if ([fileManager fileExistsAtPath:modelName]) {
             [fileManager removeItemAtPath:modelName error:nil];
         }
-
         [fileManager copyItemAtPath:sourceModelPath toPath:modelName error:nil];
     }
 
@@ -72,24 +68,24 @@ def generate_app_delegate(output_path, test_files)
   puts "Generated AppDelegate.mm with #{test_names.length} test(s)"
 end
 
-# Environment variables
 project_root = ENV['PROJECT_ROOT']
 tests_root = ENV['TESTS_ROOT']
 cactus_root = ENV['CACTUS_ROOT']
 project_path = ENV['XCODEPROJ_PATH']
 bundle_id = ENV['BUNDLE_ID']
 team_id = ENV['DEVELOPMENT_TEAM']
+device_type = ENV['DEVICE_TYPE']
 
 fail_with("PROJECT_ROOT not set") unless project_root
 fail_with("TESTS_ROOT not set") unless tests_root
 fail_with("CACTUS_ROOT not set") unless cactus_root
 fail_with("XCODEPROJ_PATH not set") unless project_path
+fail_with("DEVICE_TYPE not set (should be 'device' or 'simulator')") unless device_type
 fail_with("Xcode project not found") unless File.exist?(project_path)
 
 project = Xcodeproj::Project.open(project_path) rescue fail_with("Failed to open Xcode project")
 target = project.targets.first or fail_with("No targets found")
 
-# Add test files
 tests_group = project.main_group.find_subpath('Tests', true)
 tests_group.set_path(tests_root)
 tests_group.set_source_tree('<absolute>')
@@ -127,7 +123,6 @@ end
 
 generate_app_delegate(File.join(File.dirname(project_path), 'CactusTest', 'AppDelegate.mm'), discovered_test_files)
 
-# Clean up old CactusSources group
 cactus_sources_group = project.main_group.groups.find { |g| g.name == 'CactusSources' }
 if cactus_sources_group
   cactus_sources_group.files.each do |f|
@@ -138,23 +133,30 @@ if cactus_sources_group
   cactus_sources_group.remove_from_project
 end
 
-# Add cactus source files
-cactus_sources_group = project.main_group.new_group('CactusSources')
-cactus_sources_group.set_source_tree('<group>')
+apple_dir = File.join(project_root, 'apple')
+static_lib_path = device_type == 'simulator' ?
+  File.join(apple_dir, 'libcactus-simulator.a') :
+  File.join(apple_dir, 'libcactus-device.a')
 
-['engine', 'graph', 'kernel', 'ffi', 'models'].each do |dir|
-  Dir.glob(File.join(cactus_root, dir, '*.cpp')).each do |src_file|
-    next if cactus_sources_group.files.any? { |f| f.real_path&.to_s == src_file }
-    file_ref = cactus_sources_group.new_reference(src_file)
-    file_ref.set_source_tree('<absolute>')
-    target.source_build_phase.add_file_reference(file_ref)
+fail_with("Static library not found at: #{static_lib_path}") unless File.exist?(static_lib_path)
+puts "Using static library: #{static_lib_path}"
+
+target.frameworks_build_phase.files.to_a.each do |build_file|
+  if build_file.file_ref&.path&.to_s&.include?('libcactus')
+    target.frameworks_build_phase.files.delete(build_file)
   end
 end
 
-# Configure build settings
+libs_group = project.main_group.groups.find { |g| g.name == 'Frameworks' }
+if libs_group
+  libs_group.files.to_a.each do |f|
+    f.remove_from_project if f.path&.to_s&.include?('libcactus')
+  end
+end
+
 target.build_configurations.each do |config|
   config.build_settings['HEADER_SEARCH_PATHS'] ||= ['$(inherited)']
-  [tests_root, cactus_root, *%w[graph engine kernel ffi models].map { |d| File.join(cactus_root, d) }].each do |path|
+  [tests_root, cactus_root].each do |path|
     config.build_settings['HEADER_SEARCH_PATHS'] << path unless config.build_settings['HEADER_SEARCH_PATHS'].include?(path)
   end
 
@@ -164,47 +166,14 @@ target.build_configurations.each do |config|
   config.build_settings['CODE_SIGN_STYLE'] = 'Automatic'
   config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = bundle_id if bundle_id
   config.build_settings['DEVELOPMENT_TEAM'] = team_id if team_id
-
-  # Remove storyboard references (headless test app)
   config.build_settings.delete('INFOPLIST_KEY_UILaunchStoryboardName')
   config.build_settings.delete('INFOPLIST_KEY_UIMainStoryboardFile')
 
-  # Compiler flags
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] ||= ['$(inherited)']
+  config.build_settings['OTHER_CPLUSPLUSFLAGS'] = ['$(inherited)', '-pthread', '-Wall', '-Wextra', '-pedantic', '-O3']
 
-  # Platform defines
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-DPLATFORM_CPU_ONLY=1'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-D__ARM_NEON=1'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-D__ARM_FEATURE_FP16_VECTOR_ARITHMETIC=1'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-D__ARM_FEATURE_DOTPROD=1'
-
-  # Threading and warning flags
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-pthread'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-Wall'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-Wextra'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-pedantic'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-Wno-c++20-designator'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-Wno-missing-field-initializers'
-
-  # Architecture and optimization flags
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-march=armv8.2-a+fp16+simd+dotprod'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-O3'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-DNDEBUG'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-fomit-frame-pointer'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-funroll-loops'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-ftree-vectorize'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-fvisibility=hidden'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-fvisibility-inlines-hidden'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-ffunction-sections'
-  config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-fdata-sections'
-
-  # Linker flags
   config.build_settings['OTHER_LDFLAGS'] ||= ['$(inherited)']
-  config.build_settings['OTHER_LDFLAGS'] << '-Wl,-dead_strip'
-  config.build_settings['OTHER_LDFLAGS'] << '-flto'
-
-  # Enable Link Time Optimization
-  config.build_settings['LLVM_LTO'] = 'YES'
+  config.build_settings['OTHER_LDFLAGS'].reject! { |flag| flag.to_s.include?('libcactus') }
+  config.build_settings['OTHER_LDFLAGS'] << static_lib_path
 end
 
 project.save rescue fail_with("Failed to save Xcode project")

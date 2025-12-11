@@ -155,7 +155,15 @@ else
 fi
 
 echo ""
-echo "Step 2: Configuring Xcode project..."
+echo "Step 2: Building Cactus library for iOS..."
+
+if ! BUILD_STATIC=true BUILD_XCFRAMEWORK=false "$PROJECT_ROOT/apple/build.sh"; then
+    echo "Failed to build Cactus library"
+    exit 1
+fi
+
+echo ""
+echo "Step 3: Configuring Xcode project..."
 
 xcodeproj_path="$SCRIPT_DIR/CactusTest/CactusTest.xcodeproj"
 tests_root="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -186,14 +194,14 @@ if ! gem list xcodeproj -i; then
     fi
 fi
 
-export PROJECT_ROOT TESTS_ROOT="$tests_root" CACTUS_ROOT="$cactus_root" XCODEPROJ_PATH="$xcodeproj_path" BUNDLE_ID="$bundle_id" DEVELOPMENT_TEAM="$development_team"
+export PROJECT_ROOT TESTS_ROOT="$tests_root" CACTUS_ROOT="$cactus_root" XCODEPROJ_PATH="$xcodeproj_path" BUNDLE_ID="$bundle_id" DEVELOPMENT_TEAM="$development_team" DEVICE_TYPE="$device_type"
 if ! ruby "$SCRIPT_DIR/setup_project.rb"; then
     echo "Failed to configure Xcode project"
     exit 1
 fi
 
 echo ""
-echo "Step 3: Building iOS test application..."
+echo "Step 4: Building iOS test application..."
 
 if [ "$device_type" = "simulator" ]; then
     ios_sim_sdk_path=$(xcrun --sdk iphonesimulator --show-sdk-path)
@@ -259,7 +267,7 @@ if ! cp -R "$transcribe_model_src" "$app_path/"; then
 fi
 
 echo ""
-echo "Step 4: Running tests..."
+echo "Step 5: Running tests..."
 echo "------------------------"
 
 if [ "$device_type" = "simulator" ]; then
