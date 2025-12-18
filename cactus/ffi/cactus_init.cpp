@@ -28,6 +28,8 @@ const char* cactus_get_last_error() {
 }
 
 cactus_model_t cactus_init(const char* model_path, size_t context_size, const char* corpus_dir) {
+    CactusTelemetry::getInstance().ensureInitialized();
+    
     std::string model_path_str = model_path ? std::string(model_path) : "unknown";
 
     std::string model_name = model_path_str;
