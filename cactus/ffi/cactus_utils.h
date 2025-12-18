@@ -454,7 +454,30 @@ extern "C" {
 
 const char* cactus_get_last_error();
 
+__attribute__((weak))
+const char* register_app(const char* encrypted_data);
+
+__attribute__((weak))
+const char* get_device_id(const char* current_token);
+
 #ifdef __cplusplus
+}
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+
+__attribute__((weak))
+inline const char* register_app(const char* encrypted_data) {
+    (void)encrypted_data;
+    return generateUUID().c_str();
+}
+
+__attribute__((weak))
+inline const char* get_device_id(const char* current_token) {
+    (void)current_token;
+    return generateUUID().c_str();
+}
 }
 #endif
 

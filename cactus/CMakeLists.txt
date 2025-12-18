@@ -36,12 +36,21 @@ file(GLOB MODEL_SOURCES "models/*.cpp")
 
 file(GLOB NPU_SOURCES "npu/*.cpp")
 
-set(CACTUS_PRO_LIB "${CMAKE_CURRENT_SOURCE_DIR}/../libs/libcactus_pro.a")
+set(CACTUS_PRO_LIB "${CMAKE_CURRENT_SOURCE_DIR}/../libs/libcactus_util.a")
 if(EXISTS ${CACTUS_PRO_LIB})
-    message(STATUS "Found libcactus_pro.a - NPU acceleration enabled")
+    message(STATUS "Found libcactus_util.a - NPU acceleration enabled")
     set(CACTUS_HAS_PRO TRUE)
+    find_library(CRYPTOPP_LIBRARY NAMES cryptopp libcryptopp)
+    if(NOT CRYPTOPP_LIBRARY)
+        message(FATAL_ERROR "Crypto++ (cryptopp) library is required for libcactus_util.a")
+    endif()
+
+    find_library(SQLITE3_LIBRARY NAMES sqlite3)
+    if(NOT SQLITE3_LIBRARY)
+        message(FATAL_ERROR "sqlite3 library is required for libcactus_util.a")
+    endif()
 else()
-    message(STATUS "libcactus_pro.a not found - NPU acceleration disabled (using stubs)")
+    message(STATUS "libcactus_util.a not found - NPU acceleration disabled (using stubs)")
     set(CACTUS_HAS_PRO FALSE)
 endif()
 
@@ -86,6 +95,8 @@ function(configure_cactus_target target_name)
             target_link_libraries(${target_name} PUBLIC
                 "-Wl,--whole-archive" ${CACTUS_PRO_LIB} "-Wl,--no-whole-archive")
         endif()
+
+        target_link_libraries(${target_name} PUBLIC ${CRYPTOPP_LIBRARY} ${SQLITE3_LIBRARY})
     endif()
 
     if(APPLE)

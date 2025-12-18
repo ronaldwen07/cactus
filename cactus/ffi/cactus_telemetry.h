@@ -14,7 +14,11 @@
 #include <sys/stat.h>
 #include "cactus_utils.h"
 
-#if defined(__APPLE__) && !defined(TARGET_OS_IPHONE) && !defined(__ANDROID__)
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
+#if defined(__APPLE__) && (!TARGET_OS_IPHONE) && !defined(__ANDROID__)
 #define CACTUS_TELEMETRY_ENABLED
 #include <curl/curl.h>
 #include <sys/utsname.h>
@@ -146,13 +150,28 @@ public:
     static std::string getDeviceId();
     static std::string getProjectId();
     static std::map<std::string, std::string> getDeviceMetadata();
-    static std::string registerDevice();
+    static std::string registerDevice(const std::string& device_id = "", const std::string& pro_key = "");
+    
+    static void setProKey(const std::string& key);
+    static std::string getProKey();
 
 private:
     static std::string getConfigPath();
     static std::map<std::string, std::string> readConfig();
     static void writeConfig(const std::map<std::string, std::string>& config);
+    
+    static std::string pro_key_;
 };
+
+inline std::string DeviceManager::pro_key_ = "";
+
+inline void DeviceManager::setProKey(const std::string& key) {
+    pro_key_ = key;
+}
+
+inline std::string DeviceManager::getProKey() {
+    return pro_key_;
+}
 
 inline std::string DeviceManager::getConfigPath() {
     const char* home = getenv("HOME");
@@ -178,16 +197,6 @@ inline std::map<std::string, std::string> DeviceManager::readConfig() {
         file.close();
 
         std::string content = buffer.str();
-
-        const std::string device_id_key = "\"device_id\":\"";
-        size_t device_pos = content.find(device_id_key);
-        if (device_pos != std::string::npos) {
-            size_t start = device_pos + device_id_key.length();
-            size_t end = content.find("\"", start);
-            if (end != std::string::npos) {
-                config["device_id"] = content.substr(start, end - start);
-            }
-        }
 
         const std::string project_id_key = "\"project_id\":\"";
         size_t project_pos = content.find(project_id_key);
@@ -230,35 +239,29 @@ inline void DeviceManager::writeConfig(const std::map<std::string, std::string>&
 
 inline std::string DeviceManager::getDeviceId() {
     auto config = readConfig();
-    std::string device_id = config["device_id"];
+    std::string pro_key = getProKey();
 
-    if (!device_id.empty()) {
-        std::cerr << "[Device Manager] Using cached device ID: " << device_id << std::endl;
+    std::string project_id = config["project_id"];
+    if (project_id.empty()) {
+        project_id = generateUUID();
+    }
+
+    config["project_id"] = project_id;
+    writeConfig(config);
+
+    const char* device_id_cstr = get_device_id(pro_key.c_str());
+    if (device_id_cstr != nullptr) {
+        std::string device_id = std::string(device_id_cstr);
+        size_t pipe_pos = device_id.find('|');
+        if (pipe_pos != std::string::npos) {
+            std::string device_part = device_id.substr(0, pipe_pos);
+            std::string pro_key_part = device_id.substr(pipe_pos + 1);
+            setProKey(pro_key_part);
+            return registerDevice(device_part, pro_key_part);
+        }
         return device_id;
     }
-
-    std::cerr << "[Device Manager] No cached device ID found, registering new device..." << std::endl;
-
-    device_id = registerDevice();
-
-    if (!device_id.empty()) {
-        std::cerr << "[Device Manager] Registration successful, caching config" << std::endl;
-
-        std::string project_id = config["project_id"];
-        if (project_id.empty()) {
-            project_id = generateUUID();
-            std::cerr << "[Device Manager] Generated new project ID: " << project_id << std::endl;
-        }
-
-        config["device_id"] = device_id;
-        config["project_id"] = project_id;
-        writeConfig(config);
-    } else {
-        std::cerr << "[Device Manager] ERROR: Device registration failed!" << std::endl;
-        std::cerr << "[Device Manager] No device ID will be cached. Telemetry will not work." << std::endl;
-    }
-
-    return device_id;
+    return registerDevice("", pro_key);
 }
 
 inline std::string DeviceManager::getProjectId() {
@@ -278,58 +281,53 @@ inline std::string DeviceManager::getProjectId() {
     return project_id;
 }
 
-inline std::string DeviceManager::registerDevice() {
+inline std::string DeviceManager::registerDevice(const std::string& device_id, const std::string& pro_key) {
 #ifdef CACTUS_TELEMETRY_ENABLED
     static const std::string SUPABASE_URL = "https://vlqqczxwyaodtcdmdmlw.supabase.co";
     static const std::string SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZscXFjenh3eWFvZHRjZG1kbWx3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE1MTg2MzIsImV4cCI6MjA2NzA5NDYzMn0.nBzqGuK9j6RZ6mOPWU2boAC_5H9XDs-fPpo5P3WZYbI";
-
-    std::string device_id = generateUUID();
 
     auto metadata = getDeviceMetadata();
 
     std::ostringstream json;
     json << "{";
-    json << "\"device_id\":\"" << device_id << "\",";
-    json << "\"model\":\"" << metadata["model"] << "\",";
-    json << "\"os\":\"" << metadata["os"] << "\",";
-    json << "\"os_version\":\"" << metadata["os_version"] << "\",";
-    json << "\"brand\":\"" << metadata["brand"] << "\"";
+
+    bool has_device_data = !metadata.empty();
+    if (has_device_data) {
+        json << "\"device_data\":{"
+            << "\"model\":\"" << metadata["model"] << "\",";
+        json << "\"os\":\"" << metadata["os"] << "\",";
+        json << "\"os_version\":\"" << metadata["os_version"] << "\",";
+        json << "\"brand\":\"" << metadata["brand"] << "\"";
+        json << "}";
+    } else {
+        json << "\"device_id\":\"" << device_id << "\"";
+    }
+
+    json << ",\"cactus_pro_key\":\"" << pro_key << "\"";
     json << "}";
 
     std::string payload = json.str();
 
     std::map<std::string, std::string> headers;
-    headers["apikey"] = SUPABASE_KEY;
-    headers["Authorization"] = "Bearer " + SUPABASE_KEY;
     headers["Content-Type"] = "application/json";
-    headers["Accept-Profile"] = "cactus";
-    headers["Content-Profile"] = "cactus";
-    headers["Prefer"] = "return=representation";
 
-    std::string url = SUPABASE_URL + "/rest/v1/devices";
+    std::string url = SUPABASE_URL + "/functions/v1/device-registration";
 
     auto response = HttpClient::postJson(url, headers, payload);
 
     if (response.success && !response.body.empty()) {
-        std::string response_id;
+        const char* registered_id_cstr = register_app(response.body.c_str());
+        std::string registered_id = (registered_id_cstr && registered_id_cstr[0] != '\0')
+            ? std::string(registered_id_cstr)
+            : std::string();
 
-        const std::string id_key = "\"id\":\"";
-        size_t id_pos = response.body.find(id_key);
-        if (id_pos != std::string::npos) {
-            size_t start = id_pos + id_key.length();
-            size_t end = response.body.find("\"", start);
-            if (end != std::string::npos) {
-                response_id = response.body.substr(start, end - start);
-            }
-        }
-
-        if (!response_id.empty()) {
+        if (!registered_id.empty()) {
             std::cerr << "[Device Registration] SUCCESS - Device registered!" << std::endl;
-            return response_id;
-        } else {
-            std::cerr << "[Device Registration] FAILED - Could not parse ID from response" << std::endl;
-            return "";
+            return registered_id;
         }
+
+        std::cerr << "[Device Registration] FAILED - Could not parse ID from response" << std::endl;
+        return "";
     } else {
         std::cerr << "[Device Registration] FAILED - Direct table insertion unsuccessful" << std::endl;
         return "";
@@ -472,6 +470,7 @@ public:
     void setEnabled(bool enabled);
     void setTelemetryToken(const std::string& token);
     void setProjectId(const std::string& project_id);
+    void ensureInitialized();
 
     void recordEvent(const TelemetryMetrics& metrics);
 
@@ -500,6 +499,7 @@ private:
     void sendToSupabase(const TelemetryMetrics& metrics);
 
     bool enabled_ = false;
+    bool initialized_ = false;
     std::string telemetry_token_;
     std::string project_id_;
     std::string device_id_;
@@ -516,10 +516,7 @@ inline CactusTelemetry& CactusTelemetry::getInstance() {
 }
 
 inline CactusTelemetry::CactusTelemetry() {
-#ifdef CACTUS_TELEMETRY_ENABLED
-    device_id_ = DeviceManager::getDeviceId();
-    project_id_ = DeviceManager::getProjectId();
-#endif
+    // Device ID and project ID are now initialized lazily
 }
 
 inline void CactusTelemetry::setEnabled(bool enabled) {
@@ -535,6 +532,17 @@ inline void CactusTelemetry::setTelemetryToken(const std::string& token) {
 inline void CactusTelemetry::setProjectId(const std::string& project_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     project_id_ = project_id;
+}
+
+inline void CactusTelemetry::ensureInitialized() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!initialized_) {
+#ifdef CACTUS_TELEMETRY_ENABLED
+        device_id_ = DeviceManager::getDeviceId();
+        project_id_ = DeviceManager::getProjectId();
+#endif
+        initialized_ = true;
+    }
 }
 
 inline bool CactusTelemetry::isEnabled() const {
@@ -576,7 +584,6 @@ inline void CactusTelemetry::recordEvent(const TelemetryMetrics& metrics) {
     if (!isEnabled()) {
         return;
     }
-
     std::thread([this, metrics]() {
         sendToSupabase(metrics);
     }).detach();
@@ -654,6 +661,12 @@ inline void cactus_set_telemetry_enabled(int enabled) {
 inline void cactus_set_telemetry_token(const char* token) {
     if (token) {
         cactus::ffi::CactusTelemetry::getInstance().setTelemetryToken(token);
+    }
+}
+
+inline void cactus_set_pro_key(const char* pro_key) {
+    if (pro_key) {
+        cactus::ffi::DeviceManager::setProKey(pro_key);
     }
 }
 
