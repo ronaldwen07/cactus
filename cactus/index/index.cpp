@@ -191,13 +191,13 @@ namespace index {
         header->num_documents = num_documents_;
     }
 
-    void Index::delete_documents(const std::vector<uint32_t>& doc_ids) {
+    void Index::delete_documents(const std::vector<int>& doc_ids) {
         validate_doc_ids(doc_ids);
 
         char* index_ptr = static_cast<char*>(mapped_index_);
         char* entries = index_ptr + sizeof(IndexHeader);
 
-        for (uint32_t doc_id : doc_ids) {
+        for (int doc_id : doc_ids) {
             uint32_t i = doc_id_map_.at(doc_id);
             IndexEntry& entry = *reinterpret_cast<IndexEntry*>(entries + i * IndexEntry::size(embedding_dim_));
 
@@ -206,7 +206,7 @@ namespace index {
         }
     }
 
-    std::vector<Document> Index::get_documents(const std::vector<uint32_t>& doc_ids) {
+    std::vector<Document> Index::get_documents(const std::vector<int>& doc_ids) {
         validate_doc_ids(doc_ids);
 
         std::vector<Document> results;
@@ -216,7 +216,7 @@ namespace index {
         const char* entries = index_ptr + sizeof(IndexHeader);
         const char* data_ptr = static_cast<const char*>(mapped_data_);
 
-        for (uint32_t doc_id : doc_ids) {
+        for (int doc_id : doc_ids) {
             uint32_t i = doc_id_map_.at(doc_id);
             const IndexEntry& entry = *reinterpret_cast<const IndexEntry*>(entries + i * IndexEntry::size(embedding_dim_));
             const DataEntry* data_entry = reinterpret_cast<const DataEntry*>(data_ptr + entry.data_offset);
@@ -329,7 +329,7 @@ namespace index {
         header.embedding_dim = *reinterpret_cast<const decltype(header.embedding_dim)*>(index_ptr + offset);
         offset += sizeof(header.embedding_dim);
 
-        if (header.embedding_dim != static_cast<uint64_t>(embedding_dim_)) {
+        if (static_cast<size_t>(header.embedding_dim) != embedding_dim_) {
             throw std::runtime_error("Embedding dimension mismatch");
         }
 
@@ -382,7 +382,7 @@ namespace index {
             throw std::runtime_error("Documents vector is empty");
         }
 
-        std::unordered_set<uint32_t> seen_ids;
+        std::unordered_set<int> seen_ids;
         for (const auto& doc : documents) {
             if (doc.content.size() > 65535) {
                 throw std::runtime_error("Document content too long (max 65535 bytes) for ID: " + std::to_string(doc.id));
@@ -407,13 +407,13 @@ namespace index {
         }
     }
 
-    void Index::validate_doc_ids(const std::vector<uint32_t>& doc_ids) {
+    void Index::validate_doc_ids(const std::vector<int>& doc_ids) {
         if (doc_ids.empty()) {
             throw std::runtime_error("Document IDs vector is empty");
         }
 
-        std::unordered_set<uint32_t> seen_ids;
-        for (uint32_t doc_id : doc_ids) {
+        std::unordered_set<int> seen_ids;
+        for (int doc_id : doc_ids) {
             if (seen_ids.find(doc_id) != seen_ids.end()) {
                 throw std::runtime_error("Duplicate document ID in input: " + std::to_string(doc_id));
             }

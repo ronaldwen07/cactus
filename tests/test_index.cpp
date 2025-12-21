@@ -22,12 +22,12 @@ void create_test_index(const std::string& index_path, const std::string& data_pa
     std::ofstream index_file(index_path, std::ios::binary);
     uint32_t magic = cactus::index::MAGIC;
     uint32_t version = cactus::index::VERSION;
-    uint64_t embedding_dim_64 = static_cast<uint64_t>(embedding_dim);
-    uint64_t num_docs_64 = static_cast<uint64_t>(num_docs);
+    uint32_t embedding_dim_32 = static_cast<uint32_t>(embedding_dim);
+    uint32_t num_docs_32 = num_docs;
     index_file.write(reinterpret_cast<const char*>(&magic), sizeof(uint32_t));
     index_file.write(reinterpret_cast<const char*>(&version), sizeof(uint32_t));
-    index_file.write(reinterpret_cast<const char*>(&embedding_dim_64), sizeof(uint64_t));
-    index_file.write(reinterpret_cast<const char*>(&num_docs_64), sizeof(uint64_t));
+    index_file.write(reinterpret_cast<const char*>(&embedding_dim_32), sizeof(uint32_t));
+    index_file.write(reinterpret_cast<const char*>(&num_docs_32), sizeof(uint32_t));
     index_file.close();
 
     std::ofstream data_file(data_path, std::ios::binary);
@@ -140,7 +140,7 @@ bool test_add_multiple_documents(size_t embedding_dim) {
         cactus::index::Index index(index_path, data_path, dim);
 
         std::vector<cactus::index::Document> docs;
-        for (uint32_t i = 0; i < 10; ++i) {
+        for (int i = 0; i < 10; ++i) {
             docs.push_back({
                 i,
                 random_embedding(dim),
@@ -233,7 +233,7 @@ bool test_query_topk(size_t embedding_dim) {
         cactus::index::Index index(index_path, data_path, dim);
 
         std::vector<cactus::index::Document> docs;
-        for (uint32_t i = 0; i < 10; ++i) {
+        for (int i = 0; i < 10; ++i) {
             docs.push_back({i, random_embedding(dim), "content", "meta"});
         }
         index.add_documents(docs);
@@ -252,7 +252,7 @@ bool test_stress_many_documents(size_t embedding_dim) {
         cactus::index::Index index(index_path, data_path, dim);
 
         std::vector<cactus::index::Document> docs;
-        for (uint32_t i = 0; i < 1000; ++i) {
+        for (int i = 0; i < 1000; ++i) {
             docs.push_back({
                 i,
                 random_embedding(dim),
@@ -295,7 +295,7 @@ void run_benchmarks(size_t embedding_dim, uint32_t num_docs) {
     docs.reserve(num_docs);
     for (uint32_t i = 0; i < num_docs; ++i) {
         docs.push_back({
-            i,
+            static_cast<int>(i),
             random_embedding(embedding_dim),
             "content_" + std::to_string(i),
             "meta_" + std::to_string(i)
@@ -332,7 +332,7 @@ void run_benchmarks(size_t embedding_dim, uint32_t num_docs) {
     new_docs.reserve(num_adds);
     for (uint32_t i = 0; i < num_adds; ++i) {
         new_docs.push_back({
-            num_docs + i,
+            static_cast<int>(i + num_docs),
             random_embedding(embedding_dim),
             "new_content_" + std::to_string(i),
             "new_meta_" + std::to_string(i)
@@ -368,7 +368,7 @@ void run_benchmarks(size_t embedding_dim, uint32_t num_docs) {
     std::cout << "\n[BENCHMARK: Get - Retrieve documents by ID]\n";
 
     const int num_gets = std::min(1000, static_cast<int>(num_docs / 10));
-    std::vector<uint32_t> get_doc_ids;
+    std::vector<int> get_doc_ids;
     get_doc_ids.reserve(num_gets);
     for (int i = 0; i < num_gets; ++i) {
         get_doc_ids.push_back(i * (num_docs / num_gets));
@@ -389,7 +389,7 @@ void run_benchmarks(size_t embedding_dim, uint32_t num_docs) {
     std::cout << "\n[BENCHMARK: Delete - Remove documents]\n";
 
     const int num_deletes = std::min(1000, static_cast<int>(num_docs / 10));
-    std::vector<uint32_t> delete_doc_ids;
+    std::vector<int> delete_doc_ids;
     delete_doc_ids.reserve(num_deletes);
     for (int i = 0; i < num_deletes; ++i) {
         delete_doc_ids.push_back(i);
@@ -419,7 +419,7 @@ void run_benchmarks(size_t embedding_dim, uint32_t num_docs) {
 
 int main() {
     const size_t embedding_dim = 1024;
-    const uint32_t num_documents = 1000000;
+    const uint32_t num_documents = 100000;
 
     TestUtils::TestRunner runner("Index Tests");
 

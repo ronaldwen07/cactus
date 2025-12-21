@@ -11,14 +11,14 @@ namespace index {
     constexpr uint32_t VERSION = 1;
 
     struct Document {
-        uint32_t id;
+        int id;
         std::vector<float> embedding;
         std::string content;
         std::string metadata;
     };
 
     struct SearchResult {
-        uint32_t doc_id;
+        int doc_id;
         float score;
     };
 
@@ -38,20 +38,20 @@ namespace index {
             Index& operator=(Index&&) = delete;
 
             void add_documents(const std::vector<Document>& documents);
-            void delete_documents(const std::vector<uint32_t>& doc_ids);
-            std::vector<Document> get_documents(const std::vector<uint32_t>& doc_ids);
+            void delete_documents(const std::vector<int>& doc_ids);
+            std::vector<Document> get_documents(const std::vector<int>& doc_ids);
             std::vector<std::vector<SearchResult>> query(const std::vector<std::vector<float>>& embeddings, const SearchOptions& options);
 
         private:
             struct IndexHeader {
                 uint32_t magic;
                 uint32_t version;
-                uint64_t embedding_dim;
+                uint32_t embedding_dim;
                 uint32_t num_documents;
             };
 
             struct IndexEntry {
-                uint32_t doc_id;
+                int32_t doc_id;
                 uint64_t data_offset;
                 uint32_t data_size;
                 uint8_t flags; // bit 0: tombstone
@@ -91,9 +91,9 @@ namespace index {
             void parse_data_header();
             void build_doc_id_map();
             void validate_documents(const std::vector<Document>& documents);
-            void validate_doc_ids(const std::vector<uint32_t>& doc_ids);
+            void validate_doc_ids(const std::vector<int>& doc_ids);
 
-            std::unordered_map<uint32_t, uint32_t> doc_id_map_;
+            std::unordered_map<int, uint32_t> doc_id_map_;
 
             std::string index_path_, data_path_;
             size_t embedding_dim_;
