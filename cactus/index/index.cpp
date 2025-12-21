@@ -11,19 +11,19 @@
 namespace cactus {
 namespace index {
 
-    float dot_product(const float *a, const float *b, size_t dim) {
-        float result;
-        cactus_matmul_f32(a, b, &result, 1, dim, 1);
+    __fp16 dot_product(const __fp16 *a, const __fp16 *b, size_t dim) {
+        __fp16 result;
+        cactus_matmul_f16(a, b, &result, 1, dim, 1);
         return result;
     }
 
-    void normalize(float *v, size_t dim) {
-        float x = dot_product(v, v, dim);
+    void normalize(__fp16 *v, size_t dim) {
+        __fp16 x = dot_product(v, v, dim);
         if (x < 1e-10f) {
             throw std::runtime_error("Cannot normalize zero vector");
         }
-        cactus_scalar_op_f32(&x, &x, 1, 0, ScalarOpType::SQRT);
-        cactus_scalar_op_f32(v, v, dim, x, ScalarOpType::DIVIDE);
+        cactus_scalar_op_f16(&x, &x, 1, 0, ScalarOpType::SQRT);
+        cactus_scalar_op_f16(v, v, dim, x, ScalarOpType::DIVIDE);
     }
 
     Index::Index(const std::string& index_path, const std::string& data_path, uint32_t embedding_dim):
@@ -147,10 +147,11 @@ namespace index {
                 0
             };
 
-            std::vector<float> normalized_embedding(doc.embedding);
+            std::vector<__fp16> normalized_embedding(embedding_dim_);
+            cactus_fp32_to_fp16(doc.embedding.data(), normalized_embedding.data(), embedding_dim_);
             normalize(normalized_embedding.data(), embedding_dim_);
 
-            size_t embedding_bytes = embedding_dim_ * sizeof(float);
+            size_t embedding_bytes = embedding_dim_ * sizeof(__fp16);
             if (write(index_fd, &entry, sizeof(IndexEntry)) != sizeof(IndexEntry)
                 || write(index_fd, normalized_embedding.data(), embedding_bytes) != static_cast<ssize_t>(embedding_bytes)) {
                 close(index_fd);
@@ -220,10 +221,13 @@ namespace index {
             const IndexEntry& entry = *reinterpret_cast<const IndexEntry*>(entries + i * IndexEntry::size(embedding_dim_));
             const DataEntry* data_entry = reinterpret_cast<const DataEntry*>(data_ptr + entry.data_offset);
 
-            const float* entry_embedding = entry.embedding();
+            const __fp16* entry_embedding = entry.embedding();
+            std::vector<float> embedding_f32(embedding_dim_);
+            cactus_fp16_to_fp32(entry_embedding, embedding_f32.data(), embedding_dim_);
+
             results.emplace_back(
                 doc_id,
-                std::vector<float>(entry_embedding, entry_embedding + embedding_dim_),
+                std::move(embedding_f32),
                 std::string(data_entry->content(), data_entry->content_len),
                 std::string(data_entry->metadata(), data_entry->metadata_len)
             );
@@ -237,11 +241,12 @@ namespace index {
             return {};
         }
 
-        std::vector<std::vector<float>> normalized_embeddings;
+        std::vector<std::vector<__fp16>> normalized_embeddings;
         normalized_embeddings.reserve(embeddings.size());
 
         for (const auto& embedding : embeddings) {
-            std::vector<float> normalized_embedding(embedding);
+            std::vector<__fp16> normalized_embedding(embedding_dim_);
+            cactus_fp32_to_fp16(embedding.data(), normalized_embedding.data(), embedding_dim_);
             normalize(normalized_embedding.data(), embedding_dim_);
             normalized_embeddings.emplace_back(std::move(normalized_embedding));
         }
@@ -268,8 +273,8 @@ namespace index {
                     continue;
                 }
 
-                const float* entry_embedding = entry.embedding();
-                float score = dot_product(normalized_embedding.data(), entry_embedding, embedding_dim_);
+                const __fp16* entry_embedding = entry.embedding();
+                float score = static_cast<float>(dot_product(normalized_embedding.data(), entry_embedding, embedding_dim_));
 
                 if (score < options.score_threshold) {
                     continue;

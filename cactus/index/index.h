@@ -56,12 +56,12 @@ namespace index {
                 uint32_t data_size;
                 uint8_t flags; // bit 0: tombstone
 
-                const float* embedding() const {
-                    return reinterpret_cast<const float*>(this + 1);
+                const __fp16* embedding() const {
+                    return reinterpret_cast<const __fp16*>(this + 1);
                 }
 
                 static size_t size(uint32_t embedding_dim) {
-                    return sizeof(IndexEntry) + embedding_dim * sizeof(float);
+                    return sizeof(IndexEntry) + embedding_dim * sizeof(__fp16);
                 }
             };
 
