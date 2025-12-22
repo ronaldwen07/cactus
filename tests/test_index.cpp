@@ -21,24 +21,6 @@ std::vector<float> random_embedding(size_t dim) {
     return embedding;
 }
 
-void create_test_index(const std::string& index_path, const std::string& data_path, size_t embedding_dim, uint32_t num_docs = 0) {
-    std::ofstream index_file(index_path, std::ios::binary);
-    uint32_t magic = cactus::index::MAGIC;
-    uint32_t version = cactus::index::VERSION;
-    uint32_t embedding_dim_32 = static_cast<uint32_t>(embedding_dim);
-    uint32_t num_docs_32 = num_docs;
-    index_file.write(reinterpret_cast<const char*>(&magic), sizeof(uint32_t));
-    index_file.write(reinterpret_cast<const char*>(&version), sizeof(uint32_t));
-    index_file.write(reinterpret_cast<const char*>(&embedding_dim_32), sizeof(uint32_t));
-    index_file.write(reinterpret_cast<const char*>(&num_docs_32), sizeof(uint32_t));
-    index_file.close();
-
-    std::ofstream data_file(data_path, std::ios::binary);
-    data_file.write(reinterpret_cast<const char*>(&magic), sizeof(uint32_t));
-    data_file.write(reinterpret_cast<const char*>(&version), sizeof(uint32_t));
-    data_file.close();
-}
-
 void cleanup_test_files(const std::string& index_path, const std::string& data_path) {
     unlink(index_path.c_str());
     unlink(data_path.c_str());
@@ -62,7 +44,6 @@ bool test_constructor_valid() {
     const std::string data_path = std::string(g_index_path) + "/test_constructor_valid.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     bool success = false;
     try {
         cactus::index::Index index(index_path, data_path, 1024);
@@ -74,13 +55,31 @@ bool test_constructor_valid() {
     return success;
 }
 
+bool test_constructor_creates_new_files() {
+    const std::string index_path = std::string(g_index_path) + "/test_creates_new.idx";
+    const std::string data_path = std::string(g_index_path) + "/test_creates_new.dat";
+    cleanup_test_files(index_path, data_path);
+
+    bool success = false;
+    try {
+        cactus::index::Index index(index_path, data_path, 1024);
+        success = (access(index_path.c_str(), F_OK) == 0) &&
+                  (access(data_path.c_str(), F_OK) == 0);
+    } catch (...) {
+        success = false;
+    }
+
+    cleanup_test_files(index_path, data_path);
+    return success;
+}
+
 bool test_constructor_missing_index() {
     const std::string index_path = std::string(g_index_path) + "/test_missing.idx";
     const std::string data_path = std::string(g_index_path) + "/test_missing.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
-    unlink(index_path.c_str());
+    std::ofstream data_file(data_path, std::ios::binary);
+    data_file.close();
 
     bool caught = expect_exception([&]() {
         cactus::index::Index index(index_path, data_path, 1024);
@@ -95,8 +94,8 @@ bool test_constructor_missing_data() {
     const std::string data_path = std::string(g_index_path) + "/test_missing_data.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
-    unlink(data_path.c_str());
+    std::ofstream index_file(index_path, std::ios::binary);
+    index_file.close();
 
     bool caught = expect_exception([&]() {
         cactus::index::Index index(index_path, data_path, 1024);
@@ -132,7 +131,9 @@ bool test_constructor_dimension_mismatch() {
     const std::string data_path = std::string(g_index_path) + "/test_dim_mismatch.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
+    {
+        cactus::index::Index index(index_path, data_path, 1024);
+    }
 
     bool caught = expect_exception([&]() {
         cactus::index::Index index(index_path, data_path, 256);
@@ -151,7 +152,6 @@ bool test_add_document() {
     const std::string data_path = std::string(g_index_path) + "/test_add_document.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs = {
@@ -170,7 +170,6 @@ bool test_add_multiple_documents() {
     const std::string data_path = std::string(g_index_path) + "/test_add_multiple.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs;
@@ -198,7 +197,6 @@ bool test_add_after_delete() {
     const std::string data_path = std::string(g_index_path) + "/test_add_after_delete.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     index.add_documents({{1, random_embedding(1024), "first", "meta1"}});
@@ -220,7 +218,6 @@ bool test_get_document() {
     const std::string data_path = std::string(g_index_path) + "/test_get_document.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     auto embedding = random_embedding(1024);
@@ -244,7 +241,6 @@ bool test_get_multiple_documents() {
     const std::string data_path = std::string(g_index_path) + "/test_get_multiple.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs;
@@ -275,7 +271,6 @@ bool test_get_after_compact() {
     const std::string data_path = std::string(g_index_path) + "/test_get_after_compact.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs;
@@ -312,7 +307,6 @@ bool test_delete_document() {
     const std::string data_path = std::string(g_index_path) + "/test_delete_document.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs = {
@@ -335,7 +329,6 @@ bool test_delete_alternating() {
     const std::string data_path = std::string(g_index_path) + "/test_delete_alternating.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     for (int i = 0; i < 20; ++i) {
@@ -362,7 +355,6 @@ bool test_delete_then_query() {
     const std::string data_path = std::string(g_index_path) + "/test_delete_then_query.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     for (int i = 0; i < 10; ++i) {
@@ -396,7 +388,6 @@ bool test_compact_reclaim_space() {
     const std::string data_path = std::string(g_index_path) + "/test_compact_reclaim.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs;
@@ -446,7 +437,6 @@ bool test_compact_query_after() {
     const std::string data_path = std::string(g_index_path) + "/test_compact_query.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     auto embedding1 = random_embedding(1024);
@@ -482,7 +472,6 @@ bool test_compact_empty_index() {
     const std::string data_path = std::string(g_index_path) + "/test_compact_empty.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     index.compact();
@@ -496,7 +485,6 @@ bool test_compact_all_deleted() {
     const std::string data_path = std::string(g_index_path) + "/test_compact_all_deleted.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs;
@@ -523,7 +511,6 @@ bool test_compact_large_gaps() {
     const std::string data_path = std::string(g_index_path) + "/test_compact_gaps.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     for (int i = 0; i < 100; ++i) {
@@ -550,7 +537,6 @@ bool test_query_similarity() {
     const std::string data_path = std::string(g_index_path) + "/test_query_similarity.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     auto embedding1 = random_embedding(1024);
@@ -576,7 +562,6 @@ bool test_query_topk() {
     const std::string data_path = std::string(g_index_path) + "/test_query_topk.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs;
@@ -599,7 +584,6 @@ bool test_query_exact_match() {
     const std::string data_path = std::string(g_index_path) + "/test_query_exact.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     auto embedding = random_embedding(1024);
@@ -619,7 +603,6 @@ bool test_query_score_range() {
     const std::string data_path = std::string(g_index_path) + "/test_query_score_range.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     for (int i = 0; i < 10; ++i) {
@@ -649,7 +632,6 @@ bool test_query_score_ordering() {
     const std::string data_path = std::string(g_index_path) + "/test_query_ordering.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     for (int i = 1; i <= 20; i++) {
@@ -675,7 +657,6 @@ bool test_query_score_threshold() {
     const std::string data_path = std::string(g_index_path) + "/test_query_threshold.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     auto embedding = random_embedding(1024);
@@ -706,7 +687,6 @@ bool test_query_threshold_none_match() {
     const std::string data_path = std::string(g_index_path) + "/test_query_threshold_none.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     for (int i = 0; i < 5; ++i) {
@@ -724,7 +704,6 @@ bool test_query_threshold_default() {
     const std::string data_path = std::string(g_index_path) + "/test_query_threshold_default.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     for (int i = 0; i < 5; ++i) {
@@ -744,7 +723,6 @@ bool test_query_empty_embeddings() {
     const std::string data_path = std::string(g_index_path) + "/test_query_empty_embeddings.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     index.add_documents({{1, random_embedding(1024), "doc", "meta"}});
@@ -761,7 +739,6 @@ bool test_query_zero_topk() {
     const std::string data_path = std::string(g_index_path) + "/test_query_zero_topk.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     index.add_documents({{1, random_embedding(1024), "doc", "meta"}});
@@ -776,7 +753,6 @@ bool test_query_batch() {
     const std::string data_path = std::string(g_index_path) + "/test_query_batch.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs;
@@ -808,8 +784,6 @@ bool test_persist_after_add() {
     const std::string data_path = std::string(g_index_path) + "/test_persist_add.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
-
     {
         cactus::index::Index index(index_path, data_path, 1024);
         index.add_documents({{1, random_embedding(1024), "persisted", "meta"}});
@@ -826,8 +800,6 @@ bool test_persist_after_delete() {
     const std::string index_path = std::string(g_index_path) + "/test_persist_delete.idx";
     const std::string data_path = std::string(g_index_path) + "/test_persist_delete.dat";
     cleanup_test_files(index_path, data_path);
-
-    create_test_index(index_path, data_path, 1024);
 
     {
         cactus::index::Index index(index_path, data_path, 1024);
@@ -849,8 +821,6 @@ bool test_persist_after_compact() {
     const std::string data_path = std::string(g_index_path) + "/test_persist_compact.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
-
     {
         cactus::index::Index index(index_path, data_path, 1024);
         for (int i = 0; i < 10; ++i) {
@@ -871,8 +841,6 @@ bool test_persist_reload_sequence() {
     const std::string index_path = std::string(g_index_path) + "/test_persist_sequence.idx";
     const std::string data_path = std::string(g_index_path) + "/test_persist_sequence.dat";
     cleanup_test_files(index_path, data_path);
-
-    create_test_index(index_path, data_path, 1024);
 
     {
         cactus::index::Index index(index_path, data_path, 1024);
@@ -918,7 +886,6 @@ bool test_stress_1000_docs() {
     const std::string data_path = std::string(g_index_path) + "/test_stress_1000.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs;
@@ -943,7 +910,6 @@ bool test_stress_rapid_add_delete() {
     const std::string data_path = std::string(g_index_path) + "/test_stress_rapid.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     for (int cycle = 0; cycle < 10; ++cycle) {
@@ -970,7 +936,6 @@ bool test_edge_add_empty() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_add_empty.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs;
@@ -987,7 +952,6 @@ bool test_edge_content_over_limit() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_content_limit.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::string over_limit(65536, 'X');
@@ -1004,7 +968,6 @@ bool test_edge_get_nonexistent() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_get_nonexistent.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs = {
@@ -1025,7 +988,6 @@ bool test_edge_get_empty() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_get_empty.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs = {
@@ -1046,7 +1008,6 @@ bool test_edge_delete_nonexistent() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_delete_nonexistent.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     bool caught = expect_exception([&]() {
@@ -1062,7 +1023,6 @@ bool test_edge_delete_already_deleted() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_delete_already.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs = {
@@ -1084,7 +1044,6 @@ bool test_edge_delete_empty() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_delete_empty.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     index.add_documents({{1, random_embedding(1024), "doc", "meta"}});
@@ -1103,7 +1062,6 @@ bool test_edge_query_empty_index() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_query_empty.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     cactus::index::SearchOptions options;
@@ -1120,7 +1078,6 @@ bool test_edge_zero_embedding() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_zero_embedding.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<float> zero_embedding(1024, 0.0f);
@@ -1141,7 +1098,6 @@ bool test_edge_duplicate_id() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_duplicate_id.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs1 = {
@@ -1166,7 +1122,6 @@ bool test_edge_duplicate_id_in_batch() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_duplicate_batch.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs = {
@@ -1188,7 +1143,6 @@ bool test_edge_max_content_size() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_max_content.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::string max_content(65535, 'x');
@@ -1208,7 +1162,6 @@ bool test_edge_metadata_too_large() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_metadata_large.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::string large_metadata(1024 * 1024, 'x');
@@ -1229,7 +1182,6 @@ bool test_edge_metadata_over_limit() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_metadata_limit.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::string over_limit(65536, 'X');
@@ -1246,7 +1198,6 @@ bool test_edge_max_metadata_size() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_max_metadata.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::string max_metadata(65535, 'x');
@@ -1266,7 +1217,6 @@ bool test_edge_wrong_dimension() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_wrong_dimension.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<float> wrong_dim_embedding(1034, 0.5f);
@@ -1283,7 +1233,6 @@ bool test_edge_empty_embedding() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_empty_embedding.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<float> empty_embedding;
@@ -1300,7 +1249,6 @@ bool test_edge_nan_embedding() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_nan_embedding.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<float> nan_embedding(1024, std::nan(""));
@@ -1325,7 +1273,6 @@ bool test_edge_inf_embedding() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_inf_embedding.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<float> inf_embedding(1024, std::numeric_limits<float>::infinity());
@@ -1350,7 +1297,6 @@ bool test_edge_negative_doc_id() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_negative_id.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs = {
@@ -1369,7 +1315,6 @@ bool test_edge_empty_content_and_metadata() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_empty_content.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     std::vector<cactus::index::Document> docs = {
@@ -1390,7 +1335,6 @@ bool test_edge_unicode_content() {
     const std::string data_path = std::string(g_index_path) + "/test_edge_unicode.dat";
     cleanup_test_files(index_path, data_path);
 
-    create_test_index(index_path, data_path, 1024);
     cactus::index::Index index(index_path, data_path, 1024);
 
     cactus::index::Document doc{1, random_embedding(1024), "Hello 世界 🌍", "méta données"};
@@ -1413,9 +1357,9 @@ void run_benchmarks(size_t embedding_dim, uint32_t num_docs) {
 
     const std::string index_path = std::string(g_index_path) + "/bench_index.idx";
     const std::string data_path = std::string(g_index_path) + "/bench_data.dat";
+    cleanup_test_files(index_path, data_path);
 
     std::cout << "\n[INITIALIZATION: Creating and populating index]\n";
-    create_test_index(index_path, data_path, embedding_dim);
 
     auto start = std::chrono::high_resolution_clock::now();
     cactus::index::Index index(index_path, data_path, embedding_dim);
@@ -1555,6 +1499,7 @@ int main() {
     TestUtils::TestRunner runner("Index Tests");
 
     runner.run_test("constructor_valid", test_constructor_valid());
+    runner.run_test("constructor_creates_new_files", test_constructor_creates_new_files());
     runner.run_test("constructor_missing_index", test_constructor_missing_index());
     runner.run_test("constructor_missing_data", test_constructor_missing_data());
     runner.run_test("constructor_wrong_magic", test_constructor_wrong_magic());

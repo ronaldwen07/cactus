@@ -29,15 +29,23 @@ namespace index {
 
     Index::Index(const std::string& index_path, const std::string& data_path, size_t embedding_dim):
         index_path_(index_path), data_path_(data_path), embedding_dim_(embedding_dim),
-        index_entry_size_(IndexEntry::size(embedding_dim)),
+        index_entry_size_(IndexEntry::size(embedding_dim)), num_documents_(0),
         index_fd_(-1), data_fd_(-1),
         mapped_index_(nullptr), mapped_data_(nullptr) {
-        index_fd_ = open(index_path.c_str(), O_RDWR);
+
+        bool index_exists = (access(index_path.c_str(), F_OK) == 0);
+        bool data_exists = (access(data_path.c_str(), F_OK) == 0);
+
+        if (index_exists != data_exists) {
+            throw std::runtime_error("Index and data files must both exist or both not exist");
+        }
+
+        index_fd_ = open(index_path.c_str(), O_RDWR | O_CREAT, 0644);
         if (index_fd_ < 0) {
             throw std::runtime_error("Cannot open index file: " + index_path);
         }
 
-        data_fd_ = open(data_path.c_str(), O_RDWR);
+        data_fd_ = open(data_path.c_str(), O_RDWR | O_CREAT, 0644);
         if (data_fd_ < 0) {
             close(index_fd_);
             throw std::runtime_error("Cannot open data file: " + data_path);
@@ -60,6 +68,19 @@ namespace index {
         }
         data_file_size_ = data_st.st_size;
 
+        if (!index_exists) {
+            index_file_size_ = sizeof(IndexHeader);
+            data_file_size_ = sizeof(DataHeader);
+
+            if (ftruncate(index_fd_, index_file_size_) != 0) {
+                cleanup_and_throw("Failed to resize index file");
+            }
+
+            if (ftruncate(data_fd_, data_file_size_) != 0) {
+                cleanup_and_throw("Failed to resize data file");
+            }
+        }
+
         mapped_index_ = mmap(nullptr, index_file_size_, PROT_READ | PROT_WRITE, MAP_SHARED, index_fd_, 0);
         if (mapped_index_ == MAP_FAILED) {
             cleanup_and_throw("Cannot map file: " + index_path);
@@ -71,6 +92,27 @@ namespace index {
             close(index_fd_);
             close(data_fd_);
             throw std::runtime_error("Cannot map file: " + data_path);
+        }
+
+        if (!index_exists) {
+            IndexHeader index_header = {
+                MAGIC,
+                VERSION,
+                static_cast<uint32_t>(embedding_dim),
+                0
+            };
+            memcpy(mapped_index_, &index_header, sizeof(IndexHeader));
+
+            DataHeader data_header = { MAGIC, VERSION };
+            memcpy(mapped_data_, &data_header, sizeof(DataHeader));
+
+            if (msync(mapped_index_, index_file_size_, MS_SYNC) != 0) {
+                cleanup_and_throw("Failed to sync index file");
+            }
+
+            if (msync(mapped_data_, data_file_size_, MS_SYNC) != 0) {
+                cleanup_and_throw("Failed to sync data file");
+            }
         }
 
         parse_index_header();
