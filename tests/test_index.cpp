@@ -1027,9 +1027,7 @@ void run_benchmarks(size_t embedding_dim, uint32_t num_docs) {
     }
 
     start = std::chrono::high_resolution_clock::now();
-    for (const auto& doc_id : delete_doc_ids) {
-        index.delete_documents({doc_id});
-    }
+    index.delete_documents(delete_doc_ids);
     end = std::chrono::high_resolution_clock::now();
     auto delete_duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
 

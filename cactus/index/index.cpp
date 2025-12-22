@@ -144,14 +144,14 @@ namespace index {
                 cleanup_and_throw("Failed to write document entry");
             }
 
-            uint32_t entry_size = sizeof(DataEntry) + doc.content.size() + doc.metadata.size();
-            data_sizes.emplace_back(entry_size);
+            uint32_t data_entry_size = sizeof(DataEntry) + doc.content.size() + doc.metadata.size();
+            data_sizes.emplace_back(data_entry_size);
 
-            if (data_offset + static_cast<off_t>(entry_size) > std::numeric_limits<off_t>::max()) {
+            if (static_cast<off_t>(data_entry_size) > std::numeric_limits<off_t>::max() - data_offset) {
                 cleanup_and_throw("Data offset overflow when adding documents");
             }
 
-            data_offset += entry_size;
+            data_offset += data_entry_size;
         }
 
         lseek(index_fd, 0, SEEK_END);
@@ -204,6 +204,10 @@ namespace index {
         num_documents_ += static_cast<uint32_t>(documents.size());
         IndexHeader* header = reinterpret_cast<IndexHeader*>(mapped_index_);
         header->num_documents = num_documents_;
+
+        if (msync(mapped_index_, index_file_size_, MS_SYNC) != 0) {
+            throw std::runtime_error("Failed to sync index file to disk");
+        }
     }
 
     void Index::delete_documents(const std::vector<int>& doc_ids) {
@@ -225,6 +229,10 @@ namespace index {
 
             entry.flags |= 0x1;
             doc_id_map_.erase(doc_id);
+        }
+
+        if (msync(mapped_index_, index_file_size_, MS_SYNC) != 0) {
+            throw std::runtime_error("Failed to sync index file to disk");
         }
     }
 
@@ -436,6 +444,10 @@ namespace index {
 
             new_doc_id_map[doc_id] = new_index;
             ++new_index;
+
+            if (static_cast<off_t>(data_entry_size) > std::numeric_limits<off_t>::max() - new_data_offset) {
+                cleanup_and_throw("Data offset overflow during compaction");
+            }
             new_data_offset += data_entry_size;
         }
 
