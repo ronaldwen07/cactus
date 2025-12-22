@@ -41,6 +41,7 @@ namespace index {
             void delete_documents(const std::vector<int>& doc_ids);
             std::vector<Document> get_documents(const std::vector<int>& doc_ids);
             std::vector<std::vector<SearchResult>> query(const std::vector<std::vector<float>>& embeddings, const SearchOptions& options);
+            void compact();
 
         private:
             struct IndexHeader {
@@ -81,10 +82,6 @@ namespace index {
                 const char* metadata() const {
                     return content() + content_len;
                 }
-
-                size_t total_size() const {
-                    return sizeof(DataEntry) + content_len + metadata_len;
-                }
             };
 
             void parse_index_header();
@@ -92,11 +89,13 @@ namespace index {
             void build_doc_id_map();
             void validate_documents(const std::vector<Document>& documents);
             void validate_doc_ids(const std::vector<int>& doc_ids);
+            ssize_t write_full(int fd, const void* buf, size_t count);
 
             std::unordered_map<int, uint32_t> doc_id_map_;
 
             std::string index_path_, data_path_;
             size_t embedding_dim_;
+            size_t index_entry_size_;
             uint32_t num_documents_;
 
             int index_fd_, data_fd_;
