@@ -76,7 +76,7 @@ int cactus_complete(
         Config::ModelType model_type = handle->model->get_config().model_type;
         std::string formatted_tools;
         if (model_type == Config::ModelType::GEMMA) {
-            formatted_tools = format_gemma_tools_for_prompt(tools);
+            formatted_tools = gemma::format_tools(tools);
         } else {
             formatted_tools = format_tools_for_prompt(tools);
         }
