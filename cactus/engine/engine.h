@@ -131,6 +131,7 @@ struct MergeRule {
 struct ChatMessage {
     std::string role;
     std::string content;
+    std::string name;  
     std::vector<std::string> images;
 };
 
@@ -400,7 +401,14 @@ public:
         LFM_EXPECT_PAREN,       // -> expect (
         LFM_IN_ARGUMENTS,       // -> arguments until )
         LFM_EXPECT_BRACKET_CLOSE, // -> expect ]
-        LFM_EXPECT_END          // -> expect <|tool_call_end|>
+        LFM_EXPECT_END,         // -> expect <|tool_call_end|>
+
+        GEMMA_START,            // -> expect <start_function_call>
+        GEMMA_EXPECT_CALL,      // -> expect "call:"
+        GEMMA_IN_FUNC_NAME,     // -> expect function name
+        GEMMA_EXPECT_BRACE,     // -> expect {
+        GEMMA_IN_ARGUMENTS,     // -> arguments until }
+        GEMMA_EXPECT_END        // -> expect <end_function_call>
     };
 
     void init(Config::ModelType model_type,
@@ -447,6 +455,13 @@ private:
     std::unordered_set<uint32_t> paren_open_tokens_;      // (
     std::unordered_set<uint32_t> paren_close_tokens_;     // )
     std::unordered_set<uint32_t> equals_tokens_;          // =
+
+    // Gemma-specific tokens
+    std::unordered_set<uint32_t> gemma_call_start_tokens_;     // <start_function_call>
+    std::unordered_set<uint32_t> gemma_call_end_tokens_;       // <end_function_call>
+    std::unordered_set<uint32_t> gemma_response_start_tokens_; // <start_function_response> (blocked - app provides this)
+    std::unordered_set<uint32_t> gemma_call_prefix_tokens_;    // call:
+    std::unordered_set<uint32_t> escape_tokens_;               // <escape>
 
     std::unordered_map<uint32_t, float> current_bias_;
 

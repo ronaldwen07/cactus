@@ -115,6 +115,11 @@ int cactus_complete(
         for (const auto& stop_seq : stop_sequences)
             stop_token_sequences.push_back(tokenizer->encode(stop_seq));
 
+        if (model_type == Config::ModelType::GEMMA && !tools.empty()) {
+            stop_token_sequences.push_back(tokenizer->encode("<end_function_call>"));
+            stop_token_sequences.push_back(tokenizer->encode("<start_function_response>"));
+        }
+
         std::vector<uint32_t> generated_tokens;
         double time_to_first_token = 0.0;
         uint32_t next_token;

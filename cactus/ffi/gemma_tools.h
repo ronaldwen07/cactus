@@ -44,7 +44,7 @@ inline std::string extract_json_string(const std::string& json, size_t& pos) {
 }
 
 std::string format_argument(const std::string& json, size_t& pos, bool escape_keys);
-std::string format_parameters(const std::string& properties_json, const std::string& required_json);
+std::string format_parameters(const std::string& properties_json, const std::string& /*required_json*/);
 
 inline std::string format_argument(const std::string& json, size_t& pos, bool escape_keys = true) {
     skip_whitespace(json, pos);
@@ -195,7 +195,7 @@ inline std::string get_json_string_value(const std::string& json, size_t pos) {
     return "";
 }
 
-inline std::string format_parameters(const std::string& properties_json, const std::string& required_json) {
+inline std::string format_parameters(const std::string& properties_json, const std::string& /*required_json*/) {
     static const std::set<std::string> standard_keys = {"description", "type", "properties", "required", "nullable"};
 
     size_t pos = 0;
@@ -507,26 +507,42 @@ inline void parse_function_calls(std::string& response, std::vector<std::string>
         size_t content_start = pos + CALL_START.length();
         size_t call_end_pos = response.find(CALL_END, content_start);
 
-        if (call_end_pos != std::string::npos) {
-            std::string call_content = response.substr(content_start, call_end_pos - content_start);
+        size_t content_end = (call_end_pos != std::string::npos) ? call_end_pos : response.length();
+        std::string call_content = response.substr(content_start, content_end - content_start);
 
-            if (call_content.compare(0, 5, "call:") == 0) {
-                size_t brace_pos = call_content.find('{');
-                if (brace_pos != std::string::npos) {
-                    std::string func_name = call_content.substr(5, brace_pos - 5);
-                    std::string args_content = call_content.substr(brace_pos);
+        if (call_content.compare(0, 5, "call:") == 0) {
+            size_t brace_pos = call_content.find('{');
+
+            if (brace_pos == std::string::npos) {
+                size_t sep_pos = call_content.find_first_of(", ", 5);
+                if (sep_pos != std::string::npos) {
+                    std::string func_name = call_content.substr(5, sep_pos - 5);
+                    size_t args_start = sep_pos + 1;
+                    while (args_start < call_content.length() &&
+                           (call_content[args_start] == ' ' || call_content[args_start] == ',')) {
+                        args_start++;
+                    }
+                    std::string args_content = "{" + call_content.substr(args_start);
+                    if (args_content.back() != '}') args_content += "}";
 
                     std::string args_json = args_to_json(args_content);
-
                     std::string json_call = "{\"name\":\"" + func_name + "\",\"arguments\":" + args_json + "}";
                     function_calls.push_back(json_call);
                 }
-            }
+            } else {
+                std::string func_name = call_content.substr(5, brace_pos - 5);
+                std::string args_content = call_content.substr(brace_pos);
+                if (args_content.back() != '}') args_content += "}";
 
-            response.erase(pos, call_end_pos + CALL_END.length() - pos);
-        } else {
-            break;
+                std::string args_json = args_to_json(args_content);
+                std::string json_call = "{\"name\":\"" + func_name + "\",\"arguments\":" + args_json + "}";
+                function_calls.push_back(json_call);
+            }
         }
+
+        size_t erase_end = (call_end_pos != std::string::npos) ?
+                           call_end_pos + CALL_END.length() : response.length();
+        response.erase(pos, erase_end - pos);
     }
 }
 

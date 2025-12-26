@@ -354,9 +354,15 @@ std::string Tokenizer::format_gemma_style(const std::vector<ChatMessage>& messag
         result += "<start_of_turn>developer\n";
         if (!system_content.empty()) {
             result += system_content;
+            if (!tools_json.empty()) {
+                result += "\n"; 
+            }
         }
         if (!tools_json.empty()) {
+            result += "You are a model that can do function calling with the following functions.";
             result += tools_json;
+            result += "\n\nWhen you decide to call a function, output it in this exact format:\n";
+            result += "<start_function_call>call:function_name{arg1:<escape>value1<escape>,arg2:<escape>value2<escape>}<end_function_call>";
         }
         result += "<end_of_turn>\n";
     }
@@ -367,7 +373,8 @@ std::string Tokenizer::format_gemma_style(const std::vector<ChatMessage>& messag
         const auto& msg = messages[i];
 
         if (msg.role == "tool") {
-            result += "<start_function_response>response:tool{value:" + msg.content + "}<end_function_response>";
+            std::string func_name = msg.name.empty() ? "tool" : msg.name;
+            result += "<start_function_response>response:" + func_name + "{value:<escape>" + msg.content + "<escape>}<end_function_response>";
             prev_message_type = "tool_response";
         } else if (msg.role == "user") {
             if (prev_message_type != "tool_response") {
