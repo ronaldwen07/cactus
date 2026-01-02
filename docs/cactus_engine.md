@@ -247,7 +247,7 @@ int cactus_transcribe(
 
 **Example (file-based):**
 ```c
-cactus_model_t whisper = cactus_init("../../weights/whisper-base", 448, NULL);
+cactus_model_t whisper = cactus_init("../../weights/whisper-small", 448, NULL);
 
 char response[16384];
 int result = cactus_transcribe(whisper, "audio.wav", NULL,
@@ -267,6 +267,130 @@ char response[16384];
 int result = cactus_transcribe(whisper, NULL, NULL,
                                 response, sizeof(response), NULL, NULL, NULL,
                                 pcm_data, pcm_size);
+```
+
+### `cactus_stream_transcribe_t`
+An opaque pointer type representing a streaming transcription session. Used for real-time audio transcription with incremental confirmation.
+
+```c
+typedef void* cactus_stream_transcribe_t;
+```
+
+### `cactus_stream_transcribe_init`
+Initializes a new streaming transcription session for a transcription model.
+
+```c
+cactus_stream_transcribe_t cactus_stream_transcribe_init(
+    cactus_model_t model        // Model handle (must be Whisper model)
+);
+```
+
+**Returns:** Stream handle on success, NULL on failure
+
+**Example:**
+```c
+cactus_model_t whisper = cactus_init("../../weights/whisper-small", 448, NULL);
+cactus_stream_transcribe_t stream = cactus_stream_transcribe_init(whisper);
+if (!stream) {
+    fprintf(stderr, "Failed to initialize stream: %s\n", cactus_get_last_error());
+    return -1;
+}
+```
+
+### `cactus_stream_transcribe_insert`
+Inserts audio samples into the streaming transcription buffer. Audio should be 16-bit PCM, 16kHz, mono.
+
+```c
+int cactus_stream_transcribe_insert(
+    cactus_stream_transcribe_t stream,  // Stream handle
+    const uint8_t* pcm_buffer,          // Raw PCM audio data (16-bit, 16kHz, mono)
+    size_t pcm_buffer_size              // Size of PCM buffer in bytes
+);
+```
+
+**Returns:** 0 on success, negative value on error
+
+**Example:**
+```c
+// Insert 1 second of audio (16kHz * 2 bytes per sample)
+uint8_t audio_chunk[32000];
+// ... fill audio_chunk with PCM data ...
+
+int result = cactus_stream_transcribe_insert(stream, audio_chunk, sizeof(audio_chunk));
+if (result < 0) {
+    fprintf(stderr, "Insert failed: %s\n", cactus_get_last_error());
+}
+```
+
+### `cactus_stream_transcribe_process`
+Processes the accumulated audio buffer and returns confirmed and partial transcription results.
+
+```c
+int cactus_stream_transcribe_process(
+    cactus_stream_transcribe_t stream,  // Stream handle
+    char* response_buffer,              // Buffer for response JSON
+    size_t buffer_size,                 // Size of response buffer
+    const char* options_json            // Optional processing options (can be NULL)
+);
+```
+
+**Returns:** Number of bytes written to response_buffer on success, negative value on error
+
+**Options Format:**
+```json
+{
+    "confirmation_threshold": 0.95
+}
+```
+
+- `confirmation_threshold`: Threshold (0.0-1.0) for confirming transcription segments. Higher values require more stability before confirmation. Default: 0.95
+
+**Response Format:**
+```json
+{
+    "success": true,
+    "confirmed": "This text has been confirmed and will not change. ",
+    "partial": "This is the current partial transcription"
+}
+```
+
+- `confirmed`: Confirmed text that is stable and will not change
+- `partial`: Current transcription result
+
+**Example:**
+```c
+cactus_stream_transcribe_t stream = cactus_stream_transcribe_init(whisper);
+
+while (has_audio) {
+    uint8_t chunk[32000];
+    size_t chunk_size = read_audio(chunk, sizeof(chunk));
+
+    cactus_stream_transcribe_insert(stream, chunk, chunk_size);
+
+    char response[32768];
+    const char* options = "{\"confirmation_threshold\": 0.90}";
+    int result = cactus_stream_transcribe_process(stream, response, sizeof(response), options);
+
+    if (result > 0) {
+        printf("Response: %s\n", response);
+    }
+}
+
+cactus_stream_transcribe_destroy(stream);
+```
+
+### `cactus_stream_transcribe_destroy`
+Releases all resources associated with the streaming transcription session.
+
+```c
+void cactus_stream_transcribe_destroy(
+    cactus_stream_transcribe_t stream   // Stream handle
+);
+```
+
+**Example:**
+```c
+cactus_stream_transcribe_destroy(stream);
 ```
 
 ### `cactus_embed`
@@ -797,7 +921,7 @@ void transcription_callback(const char* token, uint32_t token_id, void* user_dat
 }
 
 int main() {
-    cactus_model_t whisper = cactus_init("path/to/whisper-base", 448, NULL);
+    cactus_model_t whisper = cactus_init("path/to/whisper-small", 448, NULL);
     if (!whisper) return -1;
 
     char response[32768];
