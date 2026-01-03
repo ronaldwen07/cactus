@@ -139,7 +139,7 @@ struct CactusStreamTranscribeHandle {
     CactusModelHandle* model_handle;
 
     std::string confirmed;
-    std::string partial;
+    std::string pending;
 
     std::vector<uint8_t> audio_buffer;
 
@@ -279,7 +279,7 @@ int cactus_stream_transcribe_process(
         std::string json_str(handle->transcribe_response_buffer);
         std::string response = extract_json_string_value(json_str, "response");
         std::string json_response = "{\"success\":true,\"confirmed\":\"" +
-            escape_json_string(handle->confirmed) + "\",\"partial\":\"" +
+            escape_json_string(handle->confirmed) + "\",\"pending\":\"" +
             escape_json_string(response) + "\"}";
 
         if (json_response.length() >= buffer_size) {

@@ -323,7 +323,7 @@ if (result < 0) {
 ```
 
 ### `cactus_stream_transcribe_process`
-Processes the accumulated audio buffer and returns confirmed and partial transcription results.
+Processes the accumulated audio buffer and returns confirmed and pending transcription results.
 
 ```c
 int cactus_stream_transcribe_process(
@@ -350,12 +350,12 @@ int cactus_stream_transcribe_process(
 {
     "success": true,
     "confirmed": "text confirmed from previous call",
-    "partial": "current transcription result"
+    "pending": "current transcription result"
 }
 ```
 
 - `confirmed`: Text that was confirmed from the previous call (append to final transcription)
-- `partial`: Current transcription result (may be confirmed in next call if stable)
+- `pending`: Current transcription result (may be confirmed in next call if stable)
 
 **Example:**
 ```c

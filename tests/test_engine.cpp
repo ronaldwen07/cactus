@@ -732,11 +732,11 @@ static bool test_stream_transcription() {
 
         std::string response_str(response);
         std::string confirmed = json_string(response_str, "confirmed");
-        std::string partial = json_string(response_str, "partial");
+        std::string pending = json_string(response_str, "pending");
 
         full_transcription += confirmed;
         if (!confirmed.empty()) std::cout << "├─ confirmed: " << confirmed << "\n";
-        if (!partial.empty()) std::cout << "├─ partial: " << partial << "\n";
+        if (!pending.empty()) std::cout << "├─ pending: " << pending << "\n";
     }
 
     char final_response[1 << 15] = {0};
