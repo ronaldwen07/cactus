@@ -349,13 +349,13 @@ int cactus_stream_transcribe_process(
 ```json
 {
     "success": true,
-    "confirmed": "This text has been confirmed and will not change. ",
-    "partial": "This is the current partial transcription"
+    "confirmed": "text confirmed from previous call",
+    "partial": "current transcription result"
 }
 ```
 
-- `confirmed`: Confirmed text that is stable and will not change
-- `partial`: Current transcription result
+- `confirmed`: Text that was confirmed from the previous call (append to final transcription)
+- `partial`: Current transcription result (may be confirmed in next call if stable)
 
 **Example:**
 ```c
@@ -375,6 +375,50 @@ while (has_audio) {
         printf("Response: %s\n", response);
     }
 }
+
+cactus_stream_transcribe_destroy(stream);
+```
+
+### `cactus_stream_transcribe_finalize`
+Finalizes the streaming session and confirms any remaining transcription.
+
+```c
+int cactus_stream_transcribe_finalize(
+    cactus_stream_transcribe_t stream,  // Stream handle
+    char* response_buffer,              // Buffer for response JSON
+    size_t buffer_size                  // Size of response buffer
+);
+```
+
+**Returns:** Number of bytes written to response_buffer on success, negative value on error
+
+**Response Format:**
+```json
+{
+    "success": true,
+    "confirmed": "Final confirmed transcription segment"
+}
+```
+
+**Example:**
+```c
+std::string full_transcription;
+
+while (has_audio) {
+    uint8_t chunk[32000];
+    size_t chunk_size = read_audio(chunk, sizeof(chunk));
+    cactus_stream_transcribe_insert(stream, chunk, chunk_size);
+
+    char response[32768];
+    cactus_stream_transcribe_process(stream, response, sizeof(response), NULL);
+
+    full_transcription += parse_json(response, "confirmed");
+}
+
+// Get final delta
+char final_response[32768];
+cactus_stream_transcribe_finalize(stream, final_response, sizeof(final_response));
+full_transcription += parse_json(final_response, "confirmed");
 
 cactus_stream_transcribe_destroy(stream);
 ```

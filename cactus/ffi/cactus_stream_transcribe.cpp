@@ -143,6 +143,7 @@ struct CactusStreamTranscribeHandle {
 
     std::vector<uint8_t> audio_buffer;
 
+    std::string last_n_words;
     std::string previous_transcription;
     size_t previous_audio_buffer_size;
 };
@@ -250,7 +251,7 @@ int cactus_stream_transcribe_process(
         char response_buffer_[4096];
 
         std::string prompt = "<|startofprev|>"
-            + get_last_n_words(handle->confirmed, 200)
+            + handle->last_n_words
             + "<|startoftranscript|><|en|><|transcribe|><|notimestamps|>";
 
         const int result = cactus_transcribe(
@@ -277,8 +278,8 @@ int cactus_stream_transcribe_process(
         std::string json_str(response_buffer_);
         std::string response = extract_json_string_value(json_str, "response");
         std::string json_response = "{\"success\":true,\"confirmed\":\"" +
-                                    escape_json_string(handle->confirmed) + "\",\"partial\":\"" +
-                                    escape_json_string(response) + "\"}";
+            escape_json_string(handle->confirmed) + "\",\"partial\":\"" +
+            escape_json_string(response) + "\"}";
 
         if (json_response.length() >= buffer_size) {
             last_error_message = "Response buffer too small";
@@ -295,11 +296,15 @@ int cactus_stream_transcribe_process(
                 handle->audio_buffer.begin() + handle->previous_audio_buffer_size,
                 handle->audio_buffer.end()
             );
-            handle->confirmed += handle->previous_transcription;
+            handle->last_n_words = get_last_n_words(handle->last_n_words + handle->previous_transcription, 200);
+            handle->confirmed = handle->previous_transcription;
+            handle->previous_transcription = "";
+            handle->previous_audio_buffer_size = 0;
+        } else {
+            handle->confirmed = "";
+            handle->previous_transcription = response;
+            handle->previous_audio_buffer_size = handle->audio_buffer.size();
         }
-
-        handle->previous_transcription = response;
-        handle->previous_audio_buffer_size = handle->audio_buffer.size();
 
         return static_cast<int>(json_response.length());
     } catch (const std::exception& e) {
@@ -311,6 +316,52 @@ int cactus_stream_transcribe_process(
         last_error_message = "Unknown exception during stream transcription processing";
         CACTUS_LOG_ERROR("stream_transcribe_process", last_error_message);
         handle_error_response("Unknown error during stream processing", response_buffer, buffer_size);
+        return -1;
+    }
+}
+
+int cactus_stream_transcribe_finalize(
+    cactus_stream_transcribe_t stream,
+    char* response_buffer,
+    size_t buffer_size
+) {
+    if (!stream) {
+        last_error_message = "Stream not initialized.";
+        CACTUS_LOG_ERROR("stream_transcribe_finalize", last_error_message);
+        return -1;
+    }
+
+    if (!response_buffer || buffer_size == 0) {
+        last_error_message = "Invalid parameters: response_buffer or buffer_size";
+        CACTUS_LOG_ERROR("stream_transcribe_finalize", last_error_message);
+        return -1;
+    }
+
+    try {
+        auto* handle = static_cast<CactusStreamTranscribeHandle*>(stream);
+
+        std::string json_response = "{\"success\":true,\"confirmed\":\"" +
+            escape_json_string(handle->confirmed + handle->previous_transcription) + "\"}";
+
+        if (json_response.length() >= buffer_size) {
+            last_error_message = "Response buffer too small";
+            CACTUS_LOG_ERROR("stream_transcribe_finalize", last_error_message);
+            handle_error_response(last_error_message, response_buffer, buffer_size);
+            return -1;
+        }
+
+        std::strcpy(response_buffer, json_response.c_str());
+
+        return static_cast<int>(json_response.length());
+    } catch (const std::exception& e) {
+        last_error_message = "Exception during stream_transcribe_finalize: " + std::string(e.what());
+        CACTUS_LOG_ERROR("stream_transcribe_finalize", last_error_message);
+        handle_error_response(e.what(), response_buffer, buffer_size);
+        return -1;
+    } catch (...) {
+        last_error_message = "Unknown exception during stream transcription finalization";
+        CACTUS_LOG_ERROR("stream_transcribe_finalize", last_error_message);
+        handle_error_response("Unknown error during stream finalization", response_buffer, buffer_size);
         return -1;
     }
 }

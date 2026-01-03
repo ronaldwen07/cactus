@@ -703,9 +703,9 @@ static bool test_stream_transcription() {
     }
     fclose(wav_file);
 
-    const size_t chunk_size = 48000;
-    size_t chunks_processed = 0;
+    const size_t chunk_size = 96000;
     Timer timer;
+    std::string full_transcription;
 
     for (size_t offset = 0; offset < pcm_samples.size(); offset += chunk_size) {
         size_t size = std::min(chunk_size, pcm_samples.size() - offset);
@@ -734,18 +734,38 @@ static bool test_stream_transcription() {
         std::string confirmed = json_string(response_str, "confirmed");
         std::string partial = json_string(response_str, "partial");
 
-        if (!confirmed.empty() || !partial.empty()) {
-            std::cout << "├─ Confirmed: " << confirmed << "\n"
-                      << "└─ Partial: " << partial << std::endl;
-        }
-        chunks_processed++;
+        full_transcription += confirmed;
+        if (!confirmed.empty()) std::cout << "├─ confirmed: " << confirmed << "\n";
+        if (!partial.empty()) std::cout << "├─ partial: " << partial << "\n";
+    }
+
+    char final_response[1 << 15] = {0};
+    int final_result = cactus_stream_transcribe_finalize(
+        stream,
+        final_response,
+        sizeof(final_response)
+    );
+
+    if (final_result < 0) {
+        std::cerr << "[✗] Finalization failed\n";
+        cactus_stream_transcribe_destroy(stream);
+        cactus_destroy(model);
+        return false;
+    }
+
+    std::string final_str(final_response);
+    std::string final_confirmed = json_string(final_str, "confirmed");
+
+    if (!final_confirmed.empty()) {
+        full_transcription += final_confirmed;
+        std::cout << "└─ confirmed: " << final_confirmed << "\n";
     }
 
     double elapsed = timer.elapsed_ms();
     std::cout << "\n[Results]\n"
-              << "├─ Chunks processed: " << chunks_processed << "\n"
               << "├─ Total time: " << std::fixed << std::setprecision(2) << (elapsed / 1000.0) << " sec\n"
-              << "└─ RAM: " << std::setprecision(1) << get_memory_usage_mb() << "MB" << std::endl;
+              << "├─ RAM: " << std::setprecision(1) << get_memory_usage_mb() << "MB\n"
+              << "└─ Full transcription: \"" << full_transcription << "\"" << std::endl;
 
     cactus_stream_transcribe_destroy(stream);
     cactus_destroy(model);

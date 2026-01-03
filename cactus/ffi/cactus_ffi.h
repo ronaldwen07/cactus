@@ -84,6 +84,12 @@ CACTUS_FFI_EXPORT int cactus_stream_transcribe_process(
     const char* options_json
 );
 
+CACTUS_FFI_EXPORT int cactus_stream_transcribe_finalize(
+    cactus_stream_transcribe_t stream,
+    char* response_buffer,
+    size_t buffer_size
+);
+
 CACTUS_FFI_EXPORT void cactus_stream_transcribe_destroy(cactus_stream_transcribe_t stream);
 
 CACTUS_FFI_EXPORT int cactus_embed(
