@@ -44,7 +44,7 @@ model.push_to_hub("username/my-lora-adapter")
 ```bash
 git clone https://github.com/cactus-compute/cactus && cd cactus && source ./setup
 ```
-<img src="../assets/setup.png" alt="Logo" style="border-radius: 30px; width: 100%;">
+<img src="../assets/setup.png" alt="Logo" style="border-radius: 30px; width: 70%;">
 
 ### 3. Convert for Cactus
 
@@ -56,7 +56,7 @@ cactus convert Qwen/Qwen3-0.6B ./my-qwen3-0.6b --lora ./my-lora-adapter
 cactus convert Qwen/Qwen3-0.6B ./my-qwen3-0.6b  --lora username/my-lora-adapter 
 
 ```
-<img src="../assets/lora.png" alt="Logo" style="border-radius: 30px; width: 100%;">
+<img src="../assets/lora.png" alt="Logo" style="border-radius: 30px; width: 70%;">
 
 ### 4. Run
 
@@ -65,7 +65,7 @@ Test your model on Mac:
 ```bash
 cactus run ./my-qwen3-0.6b
 ```
-<img src="../assets/run.png" alt="Logo" style="border-radius: 30px; width: 100%;">
+<img src="../assets/run.png" alt="Logo" style="border-radius: 30px; width: 70%;">
 
 ### 5. Use in iOS/macOS App
 
@@ -105,6 +105,20 @@ print(String(cString: response))
 // Cleanup
 cactus_destroy(model)
 ```
+<img src="../assets/app.png" alt="Logo" style="border-radius: 30px; width: 20%;">
+
+You can now build iOS apps using the following code, 
+but to see performance on any device while testing,
+run cactus tests by plugging any iphone to your Mac then running:
+
+```bash
+cactus test --<model-path-or-name> --ios 
+```
+
+Cactus demo apps will eventually expand to using your custom fine-tunes.
+Also, `cactus run` will allow plugging in a phone, 
+such that the interactive session use the phone chips,
+this way you can test before fully building out your apps.
 
 ### 6. Use in Android App
 
@@ -138,6 +152,19 @@ val model = cactus.init("/data/local/tmp/my-model", 2048, null)
 val response = cactus.complete(model, """[{"role":"user","content":"Hello!"}]""", 4096)
 cactus.destroy(model)
 ```
+
+You can now build ANdroid apps using the following code, 
+but to see performance on any device while testing,
+run cactus tests by plugging any android phone to your Mac then running:
+
+```bash
+cactus test --<model-path-or-name> --android 
+```
+
+Cactus demo apps will eventually expand to using your custom fine-tunes.
+Also, `cactus run` will allow plugging in a phone, 
+such that the interactive session use the phone chips,
+this way you can test before fully building out your apps.
 
 ## Resources
 
