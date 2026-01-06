@@ -217,7 +217,7 @@ void benchmark_matmul_int8_grouped(TestUtils::TestRunner& runner, const Benchmar
         std::vector<__fp16> C(M * N);
 
         double time_ms = time_operation<__fp16>([&]() {
-            cactus_matmul_int(A.data(), B.data(), B_scales.data(), C.data(),
+            cactus_matmul_int8(A.data(), B.data(), B_scales.data(), C.data(),
                                        M, K_aligned, N, group_size);
         }, config.iterations);
 

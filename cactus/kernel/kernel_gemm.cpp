@@ -238,7 +238,7 @@ static inline float quantize_row_fp16_to_int8(const __fp16* src, int8_t* dst, si
     return scale;
 }
 
-void cactus_matmul_int(
+void cactus_matmul_int8(
     const __fp16* A,
     const int8_t* B,
     const __fp16* B_scales,

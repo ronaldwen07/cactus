@@ -97,13 +97,13 @@ std::vector<BenchResult> benchmark_gemm_threading() {
                     CactusThreading::set_gemm_threads(num_threads);
 
                     // Warmup
-                    cactus_matmul_int(A.data(), B.data(), B_scales.data(), C.data(),
+                    cactus_matmul_int8(A.data(), B.data(), B_scales.data(), C.data(),
                                      M, K_aligned, N, group_size);
 
                     // Benchmark
                     auto start = std::chrono::high_resolution_clock::now();
                     for (int i = 0; i < iterations; ++i) {
-                        cactus_matmul_int(A.data(), B.data(), B_scales.data(), C.data(),
+                        cactus_matmul_int8(A.data(), B.data(), B_scales.data(), C.data(),
                                          M, K_aligned, N, group_size);
                     }
                     auto end = std::chrono::high_resolution_clock::now();

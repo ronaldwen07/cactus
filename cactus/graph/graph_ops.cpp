@@ -811,7 +811,7 @@ void compute_matmul_node(GraphNode& node, const std::vector<std::unique_ptr<Grap
             throw std::runtime_error("Group-wise INT8 matmul requires pretransposed weights");
         }
 
-        cactus_matmul_int(lhs, rhs, rhs_scales, output,
+        cactus_matmul_int8(lhs, rhs, rhs_scales, output,
                                    M, K, N, rhs_buffer.group_size);
 
     } else {

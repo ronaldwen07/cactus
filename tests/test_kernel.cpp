@@ -242,7 +242,7 @@ bool test_matmul_int8_grouped_correctness() {
 
     std::vector<__fp16> C(M * N);
 
-    cactus_matmul_int(A.data(), B.data(), B_scales.data(), C.data(),
+    cactus_matmul_int8(A.data(), B.data(), B_scales.data(), C.data(),
                                M, K, N, group_size);
 
     std::vector<float> C_ref(M * N, 0.0f);
