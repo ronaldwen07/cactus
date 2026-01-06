@@ -28,12 +28,62 @@ def save_tensor_with_header(tensor, output_path, precision='FP32', transpose=Fal
     max_val = np.max(original_data)
 
 
-    if precision == 'INT8':
+    # Fallback to FP16 for sensitive tensors (norm, bias, vision, conv)
+    # INT4 is only supported for GEMM weights, not for conv/norm/bias
+    if precision in ('INT8', 'INT4'):
         filename = output_path.name
-        if any(x in filename for x in ['norm', 'bias', 'vision']) or (model_type == 'bert' and 'embedding' in filename):
+        if any(x in filename for x in ['norm', 'bias', 'vision', 'conv']) or (model_type == 'bert' and 'embedding' in filename):
             precision = 'FP16'
 
-    if precision == 'INT8':
+    # Store original shape before any packing (needed for INT4)
+    original_shape = list(original_data.shape)
+
+    if precision == 'INT4':
+        # INT4 quantization: range -8 to +7
+        qmin, qmax = -8, 7
+        abs_max = max(abs(min_val), abs(max_val))
+        scale = abs_max / 7.0 if abs_max != 0 else 1.0
+
+        quantized_data = np.clip(np.round(original_data / scale), qmin, qmax).astype(np.int8)
+
+        # Compute quality metrics
+        dequantized_data = quantized_data.astype(np.float32) * scale
+        mse_error = np.mean((original_data - dequantized_data) ** 2)
+        snr_db = 10 * np.log10(np.var(original_data) / mse_error) if mse_error > 0 else float('inf')
+
+        original_flat = original_data.flatten()
+        dequantized_flat = dequantized_data.flatten()
+        cos_sim = np.dot(original_flat, dequantized_flat) / (np.linalg.norm(original_flat) * np.linalg.norm(dequantized_flat) + 1e-10)
+
+        if stats_tracker:
+            stats_tracker['quantized_tensors'] += 1
+            stats_tracker['quantized_parameters'] += original_data.size
+            stats_tracker['mse_values'].append(mse_error)
+            stats_tracker['snr_values'].append(snr_db)
+            stats_tracker['cos_sim_values'].append(cos_sim)
+
+        # Handle transpose before packing
+        if transpose and len(quantized_data.shape) == 2:
+            quantized_data = quantized_data.T
+            int4_original_shape = [original_shape[1], original_shape[0]]
+        else:
+            int4_original_shape = original_shape
+
+        # Pack INT4: 2 values per byte (low nibble = even, high nibble = odd)
+        flat = quantized_data.flatten()
+        if len(flat) % 2 != 0:
+            flat = np.append(flat, np.int8(0))  # Pad to even length
+
+        # Convert signed INT4 to unsigned nibbles (0-15)
+        unsigned = flat.astype(np.int16)
+        unsigned = np.where(unsigned < 0, unsigned + 16, unsigned).astype(np.uint8)
+
+        # Pack pairs: low nibble = even indices, high nibble = odd indices
+        even = unsigned[0::2]
+        odd = unsigned[1::2]
+        data = ((odd << 4) | (even & 0x0F)).astype(np.uint8)
+
+    elif precision == 'INT8':
         qmin, qmax = -128, 127
         standard_scale = (max_val - min_val) / (qmax - qmin) if max_val != min_val else 1.0
 
@@ -101,12 +151,16 @@ def save_tensor_with_header(tensor, output_path, precision='FP32', transpose=Fal
         stats_tracker['total_tensors'] += 1
         stats_tracker['total_parameters'] += original_data.size
 
-    shape = list(data.shape)
-    if transpose and len(shape) == 2:
-        data = data.T
-        shape = [shape[1], shape[0]]
-
-    data = data.flatten()
+    # Get shape: for INT4, use original shape (already transposed if needed); for others, use data shape
+    if precision == 'INT4':
+        shape = int4_original_shape
+        # data is already packed, flattened, and transposed if needed
+    else:
+        shape = list(data.shape)
+        if transpose and len(shape) == 2:
+            data = data.T
+            shape = [shape[1], shape[0]]
+        data = data.flatten()
 
     with open(output_path, 'wb') as f:
         ndim = len(shape)
@@ -115,7 +169,10 @@ def save_tensor_with_header(tensor, output_path, precision='FP32', transpose=Fal
         for dim in shape:
             f.write(struct.pack('<Q', dim))
 
-        if precision == 'INT8':
+        # Precision values: INT8=0, FP16=1, FP32=2, INT4=3
+        if precision == 'INT4':
+            prec_val = 3
+        elif precision == 'INT8':
             prec_val = 0
         elif precision == 'FP16':
             prec_val = 1
@@ -123,21 +180,25 @@ def save_tensor_with_header(tensor, output_path, precision='FP32', transpose=Fal
             prec_val = 2
         f.write(struct.pack('<I', prec_val))
 
-        if precision == 'INT8':
-            element_size = 1
+        # Byte size: INT4 is already packed (data.size = packed bytes)
+        if precision == 'INT4':
+            byte_size = data.size  # Already packed: 2 values per byte
+        elif precision == 'INT8':
+            byte_size = data.size * 1
         elif precision == 'FP16':
-            element_size = 2
+            byte_size = data.size * 2
         else:
-            element_size = 4
-        byte_size = data.size * element_size
+            byte_size = data.size * 4
         f.write(struct.pack('<Q', byte_size))
 
-        if precision == 'INT8':
+        # Write quantization scale for INT8 and INT4
+        if precision in ('INT8', 'INT4'):
             f.write(struct.pack('<f', scale))
 
         f.write(data.tobytes())
 
-    if precision == 'INT8':
+    # Save scale to separate file for debugging
+    if precision in ('INT8', 'INT4'):
         scale_path = output_path.with_suffix('.scale')
         with open(scale_path, 'w') as f:
             f.write(f"{scale:.10f}\n")

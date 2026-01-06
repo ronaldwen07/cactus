@@ -720,8 +720,9 @@ size_t CactusGraph::embedding(const std::string& filename, size_t indices) {
     output_shape.push_back(shape[1]);  
     
     OpParams params;
-    params.output_precision = (precision == Precision::INT8) ? Precision::FP16 : precision;
-    
+    // INT4 and INT8 embeddings output to FP16 (dequantized)
+    params.output_precision = (precision == Precision::INT8 || precision == Precision::INT4) ? Precision::FP16 : precision;
+
     return add_node(OpType::EMBEDDING, {embeddings_node, indices}, output_shape, params);
 }
 
@@ -737,8 +738,9 @@ size_t CactusGraph::embedding(size_t embedding_tensor, size_t indices) {
     output_shape.push_back(emb_buffer.shape[1]);  
     
     OpParams params;
-    params.output_precision = (emb_buffer.precision == Precision::INT8) ? Precision::FP16 : emb_buffer.precision;
-    
+    // INT4 and INT8 embeddings output to FP16 (dequantized)
+    params.output_precision = (emb_buffer.precision == Precision::INT8 || emb_buffer.precision == Precision::INT4) ? Precision::FP16 : emb_buffer.precision;
+
     return add_node(OpType::EMBEDDING, {embedding_tensor, indices}, output_shape, params);
 }
 

@@ -269,3 +269,69 @@ void cactus_int32_to_fp16_scaled(const int32_t* src, __fp16* dst, size_t count, 
         dst[i] = static_cast<__fp16>(fp32_val);
     }
 }
+
+// INT4 unpacking: converts packed INT4 (2 values per byte) to INT8
+// Pack format: low nibble = even index, high nibble = odd index
+// Signed INT4 range: -8 to +7 (stored as 0-15, where 8-15 = -8 to -1)
+void cactus_unpack_int4_to_int8(const uint8_t* packed, int8_t* unpacked, size_t num_elements) {
+    size_t i = 0;
+
+    // NEON path: process 32 INT4 values (16 packed bytes) at a time
+    for (; i + 32 <= num_elements; i += 32) {
+        // Load 16 packed bytes containing 32 INT4 values
+        uint8x16_t bytes = vld1q_u8(&packed[i / 2]);
+
+        // Extract low nibbles (even indices): value & 0x0F
+        uint8x16_t low = vandq_u8(bytes, vdupq_n_u8(0x0F));
+
+        // Extract high nibbles (odd indices): value >> 4
+        uint8x16_t high = vshrq_n_u8(bytes, 4);
+
+        // Sign extend: if nibble >= 8, subtract 16 to get signed value
+        // Reinterpret as signed for comparison
+        int8x16_t low_s = vreinterpretq_s8_u8(low);
+        int8x16_t high_s = vreinterpretq_s8_u8(high);
+
+        int8x16_t eight = vdupq_n_s8(8);
+        int8x16_t sixteen = vdupq_n_s8(16);
+
+        // Create masks for values >= 8
+        uint8x16_t low_needs_adjust = vcgeq_s8(low_s, eight);
+        uint8x16_t high_needs_adjust = vcgeq_s8(high_s, eight);
+
+        // Subtract 16 where needed for sign extension
+        low_s = vsubq_s8(low_s, vandq_s8(sixteen, vreinterpretq_s8_u8(low_needs_adjust)));
+        high_s = vsubq_s8(high_s, vandq_s8(sixteen, vreinterpretq_s8_u8(high_needs_adjust)));
+
+        // Interleave: result[2i] = low, result[2i+1] = high
+        int8x16x2_t interleaved = vzipq_s8(low_s, high_s);
+
+        // Store 32 INT8 values
+        vst1q_s8(&unpacked[i], interleaved.val[0]);
+        vst1q_s8(&unpacked[i + 16], interleaved.val[1]);
+    }
+
+    // Scalar fallback for remaining elements (process pairs)
+    for (; i + 2 <= num_elements; i += 2) {
+        uint8_t byte = packed[i / 2];
+
+        // Low nibble (even index)
+        int8_t low = byte & 0x0F;
+        if (low >= 8) low -= 16;
+
+        // High nibble (odd index)
+        int8_t high = (byte >> 4) & 0x0F;
+        if (high >= 8) high -= 16;
+
+        unpacked[i] = low;
+        unpacked[i + 1] = high;
+    }
+
+    // Handle odd element count (last element in low nibble only)
+    if (i < num_elements) {
+        uint8_t byte = packed[i / 2];
+        int8_t low = byte & 0x0F;
+        if (low >= 8) low -= 16;
+        unpacked[i] = low;
+    }
+}

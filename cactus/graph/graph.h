@@ -96,9 +96,10 @@ namespace GraphFile {
 }
 
 enum class Precision {
-    INT8, 
-    FP16,
-    FP32
+    INT8 = 0,
+    FP16 = 1,
+    FP32 = 2,
+    INT4 = 3   // Packed 4-bit integers (2 values per byte)
 };
 
 enum class ComputeBackend {
@@ -124,29 +125,45 @@ enum class OpType {
 struct PrecisionTraits {
     static constexpr size_t size_of(Precision prec) {
         switch (prec) {
+            case Precision::INT4: return 1;  // Packed: use packed_byte_size() for storage
             case Precision::INT8: return 1;
             case Precision::FP16: return 2;
             case Precision::FP32: return 4;
         }
         return 1;
     }
-    
+
+    // Compute packed byte size for storage (INT4 stores 2 values per byte)
+    static constexpr size_t packed_byte_size(Precision prec, size_t num_elements) {
+        if (prec == Precision::INT4) {
+            return (num_elements + 1) / 2;  // Round up for odd counts
+        }
+        return num_elements * size_of(prec);
+    }
+
     static constexpr bool is_integer(Precision prec) {
         switch (prec) {
+            case Precision::INT4: return true;
             case Precision::INT8: return true;
             case Precision::FP16: return false;
             case Precision::FP32: return false;
         }
         return true;
     }
-    
+
     static constexpr bool is_floating_point(Precision prec) {
         switch (prec) {
+            case Precision::INT4: return false;
             case Precision::INT8: return false;
             case Precision::FP16: return true;
             case Precision::FP32: return true;
         }
         return false;
+    }
+
+    // Check if precision requires unpacking before compute
+    static constexpr bool requires_unpack(Precision prec) {
+        return prec == Precision::INT4;
     }
 };
 

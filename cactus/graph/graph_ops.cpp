@@ -17,28 +17,35 @@ namespace {
     thread_local std::vector<__fp16> transpose_buffer_fp16;
     thread_local std::vector<float> transpose_buffer_fp32;
     thread_local std::vector<int8_t> quantization_buffer_int8;
-    
+    thread_local std::vector<int8_t> int4_unpack_buffer;
+
     void ensure_transpose_buffer_int8(size_t required_size) {
         if (transpose_buffer_int8.size() < required_size) {
             transpose_buffer_int8.resize(required_size);
         }
     }
-    
+
     void ensure_transpose_buffer_fp16(size_t required_size) {
         if (transpose_buffer_fp16.size() < required_size) {
             transpose_buffer_fp16.resize(required_size);
         }
     }
-    
+
     void ensure_transpose_buffer_fp32(size_t required_size) {
         if (transpose_buffer_fp32.size() < required_size) {
             transpose_buffer_fp32.resize(required_size);
         }
     }
-    
+
     void ensure_quantization_buffer_int8(size_t required_size) {
         if (quantization_buffer_int8.size() < required_size) {
             quantization_buffer_int8.resize(required_size);
+        }
+    }
+
+    void ensure_int4_unpack_buffer(size_t required_size) {
+        if (int4_unpack_buffer.size() < required_size) {
+            int4_unpack_buffer.resize(required_size);
         }
     }
 }
@@ -48,6 +55,7 @@ void shrink_thread_local_buffers() {
     std::vector<__fp16>().swap(transpose_buffer_fp16);
     std::vector<float>().swap(transpose_buffer_fp32);
     std::vector<int8_t>().swap(quantization_buffer_int8);
+    std::vector<int8_t>().swap(int4_unpack_buffer);
 }
 
 void compute_reduce_node(GraphNode& node, const std::vector<std::unique_ptr<GraphNode>>& nodes, const std::unordered_map<size_t, size_t>& node_index_map) {
@@ -336,11 +344,56 @@ void compute_fused_node(GraphNode& node, const std::vector<std::unique_ptr<Graph
             size_t hidden_dim = embeddings_buffer.shape[1];
             size_t num_indices = indices_buffer.total_size;
             
-            if (embeddings_buffer.precision == Precision::INT8) {
+            if (embeddings_buffer.precision == Precision::INT4) {
+                // INT4 packed embeddings: unpack and dequantize to FP16
+                const uint8_t* packed_embeddings = embeddings_buffer.data_as<uint8_t>();
+                __fp16* output = node.output_buffer.data_as<__fp16>();
+                float scale = embeddings_buffer.quantization_scale;
+
+                // Helper lambda to unpack a single INT4 value from packed storage
+                auto unpack_int4 = [packed_embeddings](size_t element_idx) -> int8_t {
+                    size_t byte_idx = element_idx / 2;
+                    uint8_t byte = packed_embeddings[byte_idx];
+                    int8_t nibble;
+                    if (element_idx % 2 == 0) {
+                        nibble = byte & 0x0F;  // Low nibble for even indices
+                    } else {
+                        nibble = (byte >> 4) & 0x0F;  // High nibble for odd indices
+                    }
+                    // Sign extend: 0-7 = positive, 8-15 = -8 to -1
+                    return (nibble >= 8) ? nibble - 16 : nibble;
+                };
+
+                if (indices_buffer.precision == Precision::FP32) {
+                    const float* indices = indices_buffer.data_as<float>();
+                    for (size_t i = 0; i < num_indices; i++) {
+                        size_t idx = static_cast<size_t>(indices[i]);
+                        if (idx >= vocab_size) {
+                            throw std::runtime_error("Embedding index out of bounds: " + std::to_string(idx) + " >= " + std::to_string(vocab_size));
+                        }
+                        for (size_t j = 0; j < hidden_dim; j++) {
+                            int8_t val = unpack_int4(idx * hidden_dim + j);
+                            output[i * hidden_dim + j] = static_cast<__fp16>(val * scale);
+                        }
+                    }
+                } else {
+                    const int8_t* indices = indices_buffer.data_as<int8_t>();
+                    for (size_t i = 0; i < num_indices; i++) {
+                        size_t idx = static_cast<size_t>(indices[i]);
+                        if (idx >= vocab_size) {
+                            throw std::runtime_error("Embedding index out of bounds: " + std::to_string(idx) + " >= " + std::to_string(vocab_size));
+                        }
+                        for (size_t j = 0; j < hidden_dim; j++) {
+                            int8_t val = unpack_int4(idx * hidden_dim + j);
+                            output[i * hidden_dim + j] = static_cast<__fp16>(val * scale);
+                        }
+                    }
+                }
+            } else if (embeddings_buffer.precision == Precision::INT8) {
                 const int8_t* embeddings = embeddings_buffer.data_as<int8_t>();
                 __fp16* output = node.output_buffer.data_as<__fp16>();
                 float scale = embeddings_buffer.quantization_scale;
-                
+
                 if (indices_buffer.precision == Precision::FP32) {
                     const float* indices = indices_buffer.data_as<float>();
                     for (size_t i = 0; i < num_indices; i++) {
@@ -805,8 +858,10 @@ void compute_transpose_node(GraphNode& node, const std::vector<std::unique_ptr<G
     const auto& permutation = node.params.permutation;
     
     switch (input_buffer.precision) {
+        case Precision::INT4:
+            throw std::runtime_error("Transpose does not support INT4 packed data - unpack to INT8 first");
         case Precision::INT8:
-            cactus_transpose_int8(input_buffer.data_as<int8_t>(), node.output_buffer.data_as<int8_t>(), 
+            cactus_transpose_int8(input_buffer.data_as<int8_t>(), node.output_buffer.data_as<int8_t>(),
                                  input_buffer.shape.data(), permutation.data(), permutation.size(),
                                  0, input_buffer.total_size);
             break;
@@ -844,7 +899,84 @@ void compute_matmul_node(GraphNode& node, const std::vector<std::unique_ptr<Grap
     if (backend == ComputeBackend::NPU) {
         throw std::runtime_error("NPU matrix multiplication not yet implemented");
     }
-    
+
+    // Handle INT4 weights: unpack to INT8, then use existing INT8 GEMM paths
+    if (rhs_buffer.precision == Precision::INT4) {
+        size_t rhs_elements = rhs_buffer.total_size;
+        ensure_int4_unpack_buffer(rhs_elements);
+
+        // Unpack INT4 packed weights to INT8
+        cactus_unpack_int4_to_int8(
+            static_cast<const uint8_t*>(rhs_buffer.get_data()),
+            int4_unpack_buffer.data(),
+            rhs_elements
+        );
+
+        const int8_t* unpacked_rhs = int4_unpack_buffer.data();
+        float rhs_scale = rhs_buffer.quantization_scale;
+
+        if (lhs_buffer.precision == Precision::FP16) {
+            // FP16 activations × INT4 weights (unpacked to INT8)
+            const __fp16* lhs = lhs_buffer.data_as<__fp16>();
+            __fp16* output = node.output_buffer.data_as<__fp16>();
+
+            size_t lhs_size = M * K;
+            size_t output_size = M * N;
+            ensure_quantization_buffer_int8(lhs_size);
+
+            float max_abs = cactus_fp16_max_abs(lhs, lhs_size);
+            float lhs_scale = max_abs / 127.0f;
+            if (lhs_scale == 0.0f) lhs_scale = 1.0f;
+
+            Quantization::fp16_to_int8(lhs, quantization_buffer_int8.data(), lhs_size, lhs_scale);
+
+            std::vector<int32_t> int32_output(output_size);
+
+            if (pretransposed_rhs) {
+                cactus_matmul_int8_to_int32(quantization_buffer_int8.data(), unpacked_rhs,
+                                           int32_output.data(), M, K, N);
+            } else {
+                ensure_transpose_buffer_int8(rhs_elements);
+                size_t rhs_perm[] = {1, 0};
+                cactus_transpose_int8(unpacked_rhs, transpose_buffer_int8.data(),
+                                     rhs_shape.data(), rhs_perm, 2, 0, rhs_shape[0]);
+                cactus_matmul_int8_to_int32(quantization_buffer_int8.data(), transpose_buffer_int8.data(),
+                                           int32_output.data(), M, K, N);
+            }
+
+            float combined_scale = lhs_scale * rhs_scale;
+            cactus_int32_to_fp16_scaled(int32_output.data(), output, output_size, combined_scale);
+
+        } else if (lhs_buffer.precision == Precision::INT8) {
+            // INT8 activations × INT4 weights (unpacked to INT8)
+            const int8_t* lhs = lhs_buffer.data_as<int8_t>();
+            float lhs_scale = lhs_buffer.quantization_scale;
+
+            if (node.output_buffer.quantization_scale == 1.0f) {
+                float estimated_scale = lhs_scale * rhs_scale;
+                estimated_scale = std::max(0.001f, std::min(estimated_scale, 10.0f));
+                node.output_buffer.quantization_scale = estimated_scale;
+            }
+
+            int8_t* output = node.output_buffer.data_as<int8_t>();
+
+            if (pretransposed_rhs) {
+                cactus_matmul_int8(lhs, unpacked_rhs, output, M, K, N,
+                                  lhs_scale, rhs_scale, node.output_buffer.quantization_scale);
+            } else {
+                ensure_transpose_buffer_int8(rhs_elements);
+                size_t rhs_perm[] = {1, 0};
+                cactus_transpose_int8(unpacked_rhs, transpose_buffer_int8.data(),
+                                     rhs_shape.data(), rhs_perm, 2, 0, rhs_shape[0]);
+                cactus_matmul_int8(lhs, transpose_buffer_int8.data(), output, M, K, N,
+                                  lhs_scale, rhs_scale, node.output_buffer.quantization_scale);
+            }
+        } else {
+            throw std::runtime_error("INT4 weights only supported with INT8 or FP16 activations");
+        }
+        return;
+    }
+
     if (lhs_buffer.precision == Precision::FP16 && rhs_buffer.precision == Precision::INT8) {
         const __fp16* lhs = lhs_buffer.data_as<__fp16>();
         const int8_t* rhs = rhs_buffer.data_as<int8_t>();
@@ -882,34 +1014,36 @@ void compute_matmul_node(GraphNode& node, const std::vector<std::unique_ptr<Grap
         
     } else {
         switch (lhs_buffer.precision) {
+            case Precision::INT4:
+                throw std::runtime_error("GEMM LHS (activation) cannot be INT4 - INT4 is only supported for RHS (weights)");
             case Precision::INT8: {
                 const int8_t* lhs = lhs_buffer.data_as<int8_t>();
                 const int8_t* rhs = rhs_buffer.data_as<int8_t>();
-                
+
                 float lhs_scale = lhs_buffer.quantization_scale;
                 float rhs_scale = rhs_buffer.quantization_scale;
-                
+
                 if (node.output_buffer.quantization_scale == 1.0f) {
                     float estimated_scale = lhs_scale * rhs_scale;
                     estimated_scale = std::max(0.001f, std::min(estimated_scale, 10.0f));
-                    
+
                     node.output_buffer.quantization_scale = estimated_scale;
-                    
+
                 }
-                
+
                 int8_t* output = node.output_buffer.data_as<int8_t>();
-                
+
                 if (pretransposed_rhs) {
                     cactus_matmul_int8(lhs, rhs, output, M, K, N, lhs_scale, rhs_scale, node.output_buffer.quantization_scale);
                 } else {
                     size_t transpose_size = rhs_shape[0] * rhs_shape[1];
                     ensure_transpose_buffer_int8(transpose_size);
-                    
+
                     size_t rhs_perm[] = {1, 0};
                     cactus_transpose_int8(rhs, transpose_buffer_int8.data(), rhs_shape.data(), rhs_perm, 2, 0, rhs_shape[0]);
                     cactus_matmul_int8(lhs, transpose_buffer_int8.data(), output, M, K, N, lhs_scale, rhs_scale, node.output_buffer.quantization_scale);
                 }
-                
+
                 break;
             }
             case Precision::FP16: {

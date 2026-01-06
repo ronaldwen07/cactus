@@ -568,7 +568,8 @@ BufferDesc::BufferDesc(const std::vector<size_t>& s, Precision prec, float scale
       quantization_scale(scale) {
     total_size = 1;
     for (size_t dim : shape) total_size *= dim;
-    byte_size = total_size * PrecisionTraits::size_of(prec);
+    // Use packed_byte_size for INT4 (2 values per byte)
+    byte_size = PrecisionTraits::packed_byte_size(prec, total_size);
 }
 
 BufferDesc::~BufferDesc() {

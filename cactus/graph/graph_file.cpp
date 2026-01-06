@@ -37,13 +37,14 @@ namespace GraphFile {
         for (size_t dim : shape) {
             total_elements *= dim;
         }
-        
-        size_t element_size = PrecisionTraits::size_of(precision);
-        size_t byte_size = total_elements * element_size;
+
+        // Use packed_byte_size for INT4 (2 values per byte)
+        size_t byte_size = PrecisionTraits::packed_byte_size(precision, total_elements);
         uint64_t size_val = static_cast<uint64_t>(byte_size);
         file.write(reinterpret_cast<const char*>(&size_val), sizeof(size_val));
-        
-        if (precision == Precision::INT8) {
+
+        // Write quantization scale for INT8 and INT4
+        if (precision == Precision::INT8 || precision == Precision::INT4) {
             float quantization_scale = buffer.quantization_scale;
             file.write(reinterpret_cast<const char*>(&quantization_scale), sizeof(quantization_scale));
         }
@@ -80,23 +81,23 @@ namespace GraphFile {
         size_t byte_size = static_cast<size_t>(size_val);
         
         float quantization_scale = 1.0f;
-        if (precision == Precision::INT8) {
+        if (precision == Precision::INT8 || precision == Precision::INT4) {
             file.read(reinterpret_cast<char*>(&quantization_scale), sizeof(quantization_scale));
         }
-        
+
         if (!file) {
             throw std::runtime_error("Error reading file header: " + filename);
         }
-        
+
         std::vector<char> buffer(byte_size);
         file.read(buffer.data(), byte_size);
-        
+
         if (!file || file.gcount() != static_cast<std::streamsize>(byte_size)) {
             throw std::runtime_error("Error reading node data: " + filename);
         }
-        
+
         size_t node_id = graph.input(shape, precision);
-        if (precision == Precision::INT8) {
+        if (precision == Precision::INT8 || precision == Precision::INT4) {
             graph.set_quantization_scale(node_id, quantization_scale);
         }
         graph.set_input(node_id, buffer.data(), precision);
@@ -214,7 +215,7 @@ const T* GraphFile::MappedFile::typed_data() const {
 GraphFile::LoadedNode GraphFile::MappedFile::load_into_graph(CactusGraph& graph) const {
     size_t node_id = graph.input(shape_, precision_);
     graph.set_external_input(node_id, const_cast<void*>(data()), precision_);
-    if (precision_ == Precision::INT8) {
+    if (precision_ == Precision::INT8 || precision_ == Precision::INT4) {
         graph.set_quantization_scale(node_id, quantization_scale_);
     }
     return {node_id, shape_, precision_, byte_size_};
@@ -252,9 +253,9 @@ void GraphFile::MappedFile::parse_header() {
     byte_size_ = static_cast<size_t>(size_val);
     offset += sizeof(uint64_t);
     
-    if (precision_ == Precision::INT8) {
+    if (precision_ == Precision::INT8 || precision_ == Precision::INT4) {
         if (offset + sizeof(float) > file_size_) {
-            throw std::runtime_error("File corrupted: missing quantization parameters for INT8 tensor");
+            throw std::runtime_error("File corrupted: missing quantization parameters for quantized tensor");
         }
         quantization_scale_ = *reinterpret_cast<const float*>(ptr + offset);
         offset += sizeof(float);

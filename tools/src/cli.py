@@ -576,7 +576,7 @@ def create_parser():
                                        auto downloads and spins up
 
     Optional flags:
-    --precision INT8|FP16|FP32         default: INT8
+    --precision INT4|INT8|FP16|FP32    default: INT4
     --token <token>                    HF token (for gated models)
 
    -----------------------------------------------------------------
@@ -585,7 +585,7 @@ def create_parser():
                                        see supported weights on ReadMe
 
     Optional flags:
-    --precision INT8|FP16|FP32         quantization (default: INT8)
+    --precision INT4|INT8|FP16|FP32    quantization (default: INT4)
     --token <token>                    HuggingFace API token
 
   -----------------------------------------------------------------
@@ -645,8 +645,8 @@ def create_parser():
     download_parser = subparsers.add_parser('download', help='Download and convert model weights')
     download_parser.add_argument('model_id', nargs='?', default=DEFAULT_MODEL_ID,
                                  help=f'HuggingFace model ID (default: {DEFAULT_MODEL_ID})')
-    download_parser.add_argument('--precision', choices=['INT8', 'FP16', 'FP32'], default='INT8',
-                                 help='Quantization precision (default: INT8)')
+    download_parser.add_argument('--precision', choices=['INT4', 'INT8', 'FP16', 'FP32'], default='INT4',
+                                 help='Quantization precision (default: INT4)')
     download_parser.add_argument('--cache-dir', help='Cache directory for HuggingFace models')
     download_parser.add_argument('--token', help='HuggingFace API token')
 
@@ -659,8 +659,8 @@ def create_parser():
     run_parser = subparsers.add_parser('run', help='Build, download (if needed), and run chat')
     run_parser.add_argument('model_id', nargs='?', default=DEFAULT_MODEL_ID,
                             help=f'HuggingFace model ID (default: {DEFAULT_MODEL_ID})')
-    run_parser.add_argument('--precision', choices=['INT8', 'FP16', 'FP32'], default='INT8',
-                            help='Quantization precision (default: INT8)')
+    run_parser.add_argument('--precision', choices=['INT4', 'INT8', 'FP16', 'FP32'], default='INT4',
+                            help='Quantization precision (default: INT4)')
     run_parser.add_argument('--cache-dir', help='Cache directory for HuggingFace models')
     run_parser.add_argument('--token', help='HuggingFace API token')
     run_parser.add_argument('--no-build', action='store_true', help='Skip building Cactus before running')
@@ -668,8 +668,8 @@ def create_parser():
     eval_parser = subparsers.add_parser('eval', help='Run evaluation scripts located outside the cactus submodule')
     eval_parser.add_argument('model_id', nargs='?', default=DEFAULT_MODEL_ID,
                              help=f'HuggingFace model ID (default: {DEFAULT_MODEL_ID})')
-    eval_parser.add_argument('--precision', choices=['INT8', 'FP16', 'FP32'], default='INT8',
-                             help='Quantization precision (default: INT8)')
+    eval_parser.add_argument('--precision', choices=['INT4', 'INT8', 'FP16', 'FP32'], default='INT4',
+                             help='Quantization precision (default: INT4)')
     eval_parser.add_argument('--cache-dir', help='Cache directory for HuggingFace models')
     eval_parser.add_argument('--token', help='HuggingFace API token')
     eval_parser.add_argument('--no-build', action='store_true', help='Skip building Cactus before running evals')
@@ -695,8 +695,8 @@ def create_parser():
     convert_parser.add_argument('model_name', help='HuggingFace model name')
     convert_parser.add_argument('output_dir', nargs='?', default=None,
                                 help='Output directory (default: weights/<model_name>)')
-    convert_parser.add_argument('--precision', choices=['INT8', 'FP16', 'FP32'], default='INT8',
-                                help='Quantization precision')
+    convert_parser.add_argument('--precision', choices=['INT4', 'INT8', 'FP16', 'FP32'], default='INT4',
+                                help='Quantization precision (default: INT4)')
     convert_parser.add_argument('--cache-dir', help='Cache directory for HuggingFace models')
     convert_parser.add_argument('--token', help='HuggingFace API token')
 

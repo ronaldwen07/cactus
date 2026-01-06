@@ -312,4 +312,10 @@ void cactus_fp16_to_int8(const __fp16* src, int8_t* dst, size_t count, float sca
 float cactus_fp16_max_abs(const __fp16* src, size_t count);
 void cactus_int32_to_fp16_scaled(const int32_t* src, __fp16* dst, size_t count, float scale);
 
-#endif 
+// INT4 unpacking: converts packed INT4 (2 values per byte) to INT8
+// packed: source buffer with num_elements/2 bytes (rounded up)
+// unpacked: destination INT8 buffer with num_elements bytes
+// num_elements: number of INT4 values to unpack (not byte count)
+void cactus_unpack_int4_to_int8(const uint8_t* packed, int8_t* unpacked, size_t num_elements);
+
+#endif
