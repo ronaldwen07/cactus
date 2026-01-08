@@ -72,43 +72,43 @@ Example response from Gemma3-270m-INT8
 - <sub>**Decode** = toks/sec, **P/D** = prefill/decode, **VLM** = 256×256 image, **STT** = 30s audio</sub>
 - <sub>**Cactus Pro**: Uses NPU for realtime and large context (Apple for now), scores are marked with *</sub>
 
-| Device | Short Decode | 1k-P/D | 4k-P/D | 4k-RAM | VLM-TTFT | VLM-Dec | VLM-RAM | STT-TTFT | STT-Dec | STT-RAM |
-|--------|--------|--------|--------|--------|----------|---------|---------|----------|---------|---------|
-| Mac M4 Pro | 173 | 1574/115 | 1089/100 | 122MB | 0.4s/0.1s* | 168 | 112MB | 1.7s/0.2s* | 83 | 142MB |
-| Mac M3 Pro | 150 | 1540/109 | 890/93 | 121MB | 0.5s/0.1s* | 149 | 113MB | 2.9s/0.4s* | 78 | 140MB |
-| iPad/Mac M4 | 129 | 793/82 | 507/64 | 80MB | 0.5s/0.1s* | 113 | 145MB | 2.4s0.3s* | 60 | 131MB |
-| iPad/Mac M3 | 112 | 786/78 | 446/60 | 81MB | 0.6s/0.1s* | 111 | 154MB | 4.2s/0.7s* | 58 | 142MB |
-| iPhone 17 Pro | 136 | 810/105 | 628/84 | - | 1.1s/0.1s* | 120 | - | 3.0s/0.6s* | - | - |
-| iPhone 16 Pro | 114 | 716/98 | 580/81 | - | 1.3s/0.2s* | 101 | - | 3.5s/0.7s* | 75 | - |
-| iPhone 15 Pro | 99 | 549/86 | 530/75 | - | 1.5s/0.3s* | 92 | - | 3.8s/0.8s* | 70 | - |
-| Galaxy S25 Ultra | 91 | 230/63 | 173/57 | 128MB | 1.4s | 58 | - | - | - | - |
-| Nothing 3 | 56 | 167/49 | 160/46 | - | 1.7s | 54 | - | 8.5s | 55 | - |
-| Nothing 3a | 31 | 114/26 | 108/24 | - | 2.4s | 29 | - | - | - | - |
-| Raspberry Pi 5 | 24 | 192/28 | - | - | 2.3s | 23 | - | 21s | 16 | - |
+| Device | Short Decode | 1k-P/D | 4k-P/D | VLM-TTFT | VLM-Dec | STT-TTFT | STT-Dec |
+|--------|--------|--------|--------|----------|---------|----------|---------|
+| Mac M4 Pro | 173 | 1574/115 | 1089/100 | 0.4s/0.1s* | 168 | 1.7s/0.2s* | 83 |
+| Mac M3 Pro | 150 | 1540/109 | 890/93 | 0.5s/0.1s* | 149 | 2.9s/0.4s* | 78 |
+| iPad/Mac M4 | 129 | 793/82 | 507/64 | 0.5s/0.1s* | 113 | 2.4s0.3s* | 60 |
+| iPad/Mac M3 | 112 | 786/78 | 446/60 | 0.6s/0.1s* | 111 | 4.2s/0.7s* | 58 |
+| iPhone 17 Pro | 136 | 810/105 | 628/84 | 1.1s/0.1s* | 120 | 3.0s/0.6s* | - |
+| iPhone 16 Pro | 114 | 716/98 | 580/81 | 1.3s/0.2s* | 101 | 3.5s/0.7s* | 75 |
+| iPhone 15 Pro | 99 | 549/86 | 530/75 | 1.5s/0.3s* | 92 | 3.8s/0.8s* | 70 |
+| Galaxy S25 Ultra | 91 | 230/63 | 173/57 | 1.4s | 58 | - | - |
+| Nothing 3 | 56 | 167/49 | 160/46 | 1.7s | 54 | 8.5s | 55 |
+| Nothing 3a | 31 | 114/26 | 108/24 | 2.4s | 29 | - | - |
+| Raspberry Pi 5 | 24 | 192/28 | - | 2.3s | 23 | 21s | 16 |
 
 
-# Supported models 
+# Supported models
 
-| Model | Compressed Size | Completion | Tool Call | Vision | Embed | Speech | Pro
-|-------|--------------------|-------------------|----------------|------|------|------|------|
-| google/gemma-3-270m-it | 172MB  | ✓ | ✗ | ✗ | ✗ | ✗ | Apple |
-| google/functiongemma-270m-it | 172MB  | ✓ | ✓ | ✗ | ✗ | ✗ | Apple |
-| openai/whisper-small | 282MB  | ✗ | ✗ | ✗ | ✓ | ✓ | Apple |
-| LiquidAI/LFM2-350M | 233MB  | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
-| HuggingFaceTB/SmolLM2-360m-Instruct | 227MB  | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| LiquidAI/LFM2-VL-450M | 420MB  | ✓ | ✗ | ✓ | ✓ | ✗ | Apple |
-| Qwen/Qwen3-0.6B | 394MB  | ✓ | ✓ | ✗ | ✓ | ✗ | Apple |
-| Qwen/Qwen3-Embedding-0.6B | 394MB  | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ |
-| LiquidAI/LFM2-700M | 467MB  | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
-| nomic-ai/nomic-embed-text-v2-moe | 533MB  | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ |
-| google/gemma-3-1b-it | 642MB  | ✓ | ✗ | ✗ | ✗ | ✗ | Apple |
-| openai/whisper-medium | 646MB  | ✗ | ✗ | ✗ | ✓ | ✓ | Apple |
-| LiquidAI/LFM2.5-1.2B-Instruct | 722MB  | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
-| LiquidAI/LFM2-1.2B-RAG | 722MB  | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
-| LiquidAI/LFM2-1.2B-Tool | 722MB  | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
-| LiquidAI/LFM2.5-VL-1.6B | 1440MB  | ✓ | ✗ | ✓ | ✓ | ✗ | Apple |
-| Qwen/Qwen3-1.7B | 1161MB  | ✓ | ✓ | ✗ | ✓ | ✗ | Apple |
-| HuggingFaceTB/SmolLM2-1.7B-Instruct | 1161MB  | ✓ | ✗ | ✗ | ✓ | ✗ | ✗ |
+| Model | File Size | 4k-RAM | Completion | Tool Call | Vision | Embed | Speech | Pro |
+|-------|-----------|--------|------------|-----------|--------|-------|--------|-----|
+| google/gemma-3-270m-it | 172MB | - | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| google/functiongemma-270m-it | 172MB | - | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ |
+| openai/whisper-small | 282MB | - | ✗ | ✗ | ✗ | ✓ | ✓ | Apple |
+| LiquidAI/LFM2-350M | 233MB | - | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
+| HuggingFaceTB/SmolLM2-360m-Instruct | 227MB | - | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| LiquidAI/LFM2-VL-450M | 420MB | - | ✓ | ✗ | ✓ | ✓ | ✗ | Apple |
+| Qwen/Qwen3-0.6B | 394MB | - | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
+| Qwen/Qwen3-Embedding-0.6B | 394MB | - | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ |
+| LiquidAI/LFM2-700M | 467MB | - | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
+| nomic-ai/nomic-embed-text-v2-moe | 533MB | - | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ |
+| google/gemma-3-1b-it | 642MB | - | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| openai/whisper-medium | 646MB | - | ✗ | ✗ | ✗ | ✓ | ✓ | Apple |
+| LiquidAI/LFM2.5-1.2B-Instruct | 722MB | - | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
+| LiquidAI/LFM2-1.2B-RAG | 722MB | - | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
+| LiquidAI/LFM2-1.2B-Tool | 722MB | - | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
+| LiquidAI/LFM2.5-VL-1.6B | 1440MB | - | ✓ | ✗ | ✓ | ✓ | ✗ | Apple |
+| Qwen/Qwen3-1.7B | 1161MB | - | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
+| HuggingFaceTB/SmolLM2-1.7B-Instruct | 1161MB | - | ✓ | ✗ | ✗ | ✓ | ✗ | ✗ |
 
 
 # Using this repo on a Mac
