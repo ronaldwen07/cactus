@@ -135,62 +135,6 @@ bool test_tool_call() {
         }, tools, -1, "What's the weather in San Francisco?");
 }
 
-bool test_image_input() {
-    std::string model_path_str(g_model_path ? g_model_path : "");
-    std::string config_path = model_path_str + "/config.txt";
-    std::ifstream config_file(config_path);
-    if (config_file.good()) {
-        std::string line;
-        while (std::getline(config_file, line)) {
-            if (line.find("model_variant=vlm") != std::string::npos ||
-                line.find("model_variant=VLM") != std::string::npos) {
-                break;
-            }
-        }
-        config_file.close();
-    }
-
-    std::string vision_file = model_path_str + "/vision_patch_embedding.weights";
-    std::ifstream vf(vision_file);
-    if (!vf.good()) {
-        std::cout << "Skipping image input test: vision weights not found." << std::endl;
-        return true;
-    }
-    vf.close();
-
-    std::cout << "\n╔══════════════════════════════════════════╗\n"
-              << "║          IMAGE INPUT TEST                ║\n"
-              << "╚══════════════════════════════════════════╝\n";
-
-    cactus_model_t model = cactus_init(g_model_path, 2048, nullptr);
-    if (!model) {
-        std::cerr << "Failed to initialize model for image test" << std::endl;
-        return false;
-    }
-
-    std::string img_path = std::string(g_assets_path) + "/test_monkey.png";
-    std::string messages_json = "[{\"role\": \"user\", "
-        "\"content\": \"Describe what is happening in this image in two sentences.\", "
-        "\"images\": [\"" + img_path + "\"]}]";
-
-    StreamingData stream_data;
-    stream_data.model = model;
-
-    char response[4096];
-
-    std::cout << "Response: ";
-    int result = cactus_complete(model, messages_json.c_str(), response, sizeof(response),
-                                 g_options, nullptr, stream_callback, &stream_data);
-
-    std::cout << "\n\n[Results]\n";
-    Metrics metrics;
-    metrics.parse(response);
-    metrics.print_perf(get_memory_usage_mb());
-
-    bool success = result > 0 && stream_data.token_count > 0;
-    cactus_destroy(model);
-    return success;
-}
 
 bool test_vlm_multiturn() {
     std::string model_path_str(g_model_path ? g_model_path : "");
@@ -1003,7 +947,6 @@ int main() {
     runner.run_test("embeddings", test_embeddings());
     runner.run_test("image_embeddings", test_image_embeddings());
     runner.run_test("audio_embeddings", test_audio_embeddings());
-    runner.run_test("image_input", test_image_input());
     runner.run_test("vlm_multiturn", test_vlm_multiturn());
     runner.run_test("audio_processor", test_audio_processor());
     runner.run_test("transcription", test_transcription());

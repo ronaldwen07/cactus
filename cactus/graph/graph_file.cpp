@@ -448,7 +448,6 @@ void GraphFile::MappedFile::parse_header() {
 }
 
 void GraphFile::MappedFile::apply_madvise_hints() {
-
     if (scales_bytes_ > 0 && scales_offset_ > 0) {
         madvise(static_cast<char*>(mapped_data_) + scales_offset_, scales_bytes_, MADV_WILLNEED);
     }
@@ -458,6 +457,28 @@ void GraphFile::MappedFile::apply_madvise_hints() {
     if (byte_size_ > 1024 * 1024) {
         madvise(static_cast<char*>(mapped_data_) + data_offset_, byte_size_, MADV_WILLNEED);
     }
+}
+
+void GraphFile::MappedFile::release_pages() {
+    if (mapped_data_ == nullptr || mapped_data_ == MAP_FAILED) return;
+
+    if (scales_bytes_ > 0 && scales_offset_ > 0) {
+        madvise(static_cast<char*>(mapped_data_) + scales_offset_, scales_bytes_, MADV_DONTNEED);
+    }
+    madvise(static_cast<char*>(mapped_data_) + data_offset_, byte_size_, MADV_DONTNEED);
+
+    if (is_int4_ && unpacked_int4_data_) {
+        unpacked_int4_data_.reset();
+    }
+}
+
+void GraphFile::MappedFile::prefetch_pages() {
+    if (mapped_data_ == nullptr || mapped_data_ == MAP_FAILED) return;
+
+    if (scales_bytes_ > 0 && scales_offset_ > 0) {
+        madvise(static_cast<char*>(mapped_data_) + scales_offset_, scales_bytes_, MADV_WILLNEED);
+    }
+    madvise(static_cast<char*>(mapped_data_) + data_offset_, byte_size_, MADV_WILLNEED);
 }
 
 template const int8_t* GraphFile::MappedFile::typed_data<int8_t>() const;

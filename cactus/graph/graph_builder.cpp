@@ -596,7 +596,9 @@ size_t CactusGraph::mmap_embeddings(const std::string& filename) {
                           const_cast<void*>(mapped_file->scales_data()));
     }
 
+    size_t file_idx = mapped_files_.size();
     mapped_files_.push_back(std::move(mapped_file));
+    node_to_mapped_file_[node_id] = file_idx;
     return node_id;
 }
 
@@ -619,9 +621,31 @@ size_t CactusGraph::mmap_weights(const std::string& filename) {
                           const_cast<void*>(mapped_file->scales_data()));
     }
 
+    size_t file_idx = mapped_files_.size();
     mapped_files_.push_back(std::move(mapped_file));
+    node_to_mapped_file_[node_id] = file_idx;
     weight_cache_[filename] = node_id;
     return node_id;
+}
+
+void CactusGraph::release_weight_pages(size_t node_id) {
+    auto it = node_to_mapped_file_.find(node_id);
+    if (it != node_to_mapped_file_.end() && it->second < mapped_files_.size()) {
+        mapped_files_[it->second]->release_pages();
+    }
+}
+
+void CactusGraph::prefetch_weight_pages(size_t node_id) {
+    auto it = node_to_mapped_file_.find(node_id);
+    if (it != node_to_mapped_file_.end() && it->second < mapped_files_.size()) {
+        mapped_files_[it->second]->prefetch_pages();
+    }
+}
+
+void CactusGraph::release_all_weight_pages() {
+    for (auto& mf : mapped_files_) {
+        if (mf) mf->release_pages();
+    }
 }
 
 size_t CactusGraph::load_weights(const std::string& filename) {
@@ -1214,6 +1238,40 @@ void CactusGraph::soft_reset() {
 
     next_node_id_ = max_preserved_id + 1;
     debug_nodes_.clear();
-    buffer_pool_.clear();
-    shrink_thread_local_buffers();
+    if (!prefill_mode_) {
+        buffer_pool_.clear();
+        shrink_thread_local_buffers();
+    }
+}
+
+void CactusGraph::soft_reset_keep_pool() {
+    std::set<size_t> cached_node_ids;
+    for (const auto& cache_entry : weight_cache_) {
+        cached_node_ids.insert(cache_entry.second);
+    }
+
+    size_t max_preserved_id = 0;
+    for (const auto& node : nodes_) {
+        if ((node->op_type == OpType::INPUT && node->output_buffer.external_data) ||
+            cached_node_ids.count(node->id)) {
+            max_preserved_id = std::max(max_preserved_id, node->id);
+        }
+    }
+
+    auto preserved_nodes = std::move(nodes_);
+
+    nodes_.clear();
+    node_index_map_.clear();
+
+    for (auto& node : preserved_nodes) {
+        if ((node->op_type == OpType::INPUT && node->output_buffer.external_data) ||
+            cached_node_ids.count(node->id)) {
+            size_t index = nodes_.size();
+            node_index_map_[node->id] = index;
+            nodes_.push_back(std::move(node));
+        }
+    }
+
+    next_node_id_ = max_preserved_id + 1;
+    debug_nodes_.clear();
 }

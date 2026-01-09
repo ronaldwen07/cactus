@@ -411,6 +411,10 @@ public:
     size_t mmap_weights(const std::string& filename);
     size_t load_weights(const std::string& filename);
     void set_grouped_scales(size_t node_id, size_t group_size, size_t num_groups, void* scales_ptr);
+
+    void release_weight_pages(size_t node_id);
+    void prefetch_weight_pages(size_t node_id);
+    void release_all_weight_pages();
     size_t embedding(const std::string& filename, size_t indices);
     size_t embedding(size_t embedding_tensor, size_t indices);
     size_t bilinear_interpolation(size_t pos_embeds, size_t dst_height, size_t dst_width);
@@ -445,6 +449,8 @@ public:
     void execute(const std::string& profile_file = "");
     void hard_reset();
     void soft_reset();
+    void soft_reset_keep_pool();
+    void set_prefill_mode(bool enabled) { prefill_mode_ = enabled; }
 
     void register_debug_node(uint32_t layer_idx, const std::string& name, size_t node_id);
     void capture_debug_node(uint32_t layer_idx, const std::string& name, size_t node_id);
@@ -463,8 +469,10 @@ private:
     size_t next_node_id_;
     std::vector<std::unique_ptr<GraphFile::MappedFile>> mapped_files_;
     std::unordered_map<std::string, size_t> weight_cache_;
+    std::unordered_map<size_t, size_t> node_to_mapped_file_;
     std::vector<DebugNodeEntry> debug_nodes_;
     BufferPool buffer_pool_;
+    bool prefill_mode_ = false;
 };
 
 
@@ -510,6 +518,9 @@ namespace GraphFile {
 
         LoadedNode load_into_graph(CactusGraph& graph) const;
 
+        void release_pages();
+        void prefetch_pages();
+
     private:
         int fd_;
         void* mapped_data_;
@@ -527,7 +538,7 @@ namespace GraphFile {
         mutable std::unique_ptr<int8_t[]> unpacked_int4_data_;
         void parse_header();
         void apply_madvise_hints();
-        void unpack_int4_if_needed() const;  
+        void unpack_int4_if_needed() const;
     };
 
     MappedFile mmap_load(const std::string& filename);

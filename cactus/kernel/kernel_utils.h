@@ -22,14 +22,21 @@
 #include <cstdio>
 
 constexpr size_t NEON_VECTOR_SIZE = 16;
+constexpr size_t STREAMING_STORE_THRESHOLD = 32768;
 
-inline int8_t clamp_to_int8(float value) {
-    int32_t clamped = static_cast<int32_t>(roundf(value));
-    return static_cast<int8_t>(std::max(-128, std::min(127, clamped)));
-}
-
-inline int8_t clamp_to_int8(int32_t value) {
-    return static_cast<int8_t>(std::max(-128, std::min(127, value)));
+inline void stream_store_f16x8(__fp16* dst, float16x8_t val) {
+#if defined(__aarch64__)
+    float16x4_t lo = vget_low_f16(val);
+    float16x4_t hi = vget_high_f16(val);
+    __asm__ __volatile__(
+        "stnp %d0, %d1, [%2]"
+        :
+        : "w"(lo), "w"(hi), "r"(dst)
+        : "memory"
+    );
+#else
+    vst1q_f16(dst, val);
+#endif
 }
 
 #if defined(__ARM_FEATURE_DOTPROD)
@@ -58,21 +65,72 @@ inline int32x4_t accum_matmul(int32x4_t acc, int8x16_t a, int8x16_t b) {
 #define CACTUS_HAS_I8MM 1
 #endif
 
-inline float16x8_t accum_f16_dot(float16x8_t acc, float16x8_t a_low, float16x8_t a_high, 
+inline float16x8_t accum_f16_dot(float16x8_t acc, float16x8_t a_low, float16x8_t a_high,
                                  float16x8_t b_low, float16x8_t b_high) {
     acc = vfmaq_f16(acc, a_low, b_low);
     return vfmaq_f16(acc, a_high, b_high);
 }
 
-inline float32x4_t accum_f32_dot(float32x4_t acc, float32x4_t a_low, float32x4_t a_high,
-                                  float32x4_t b_low, float32x4_t b_high) {
-    acc = vfmaq_f32(acc, a_low, b_low);
-    return vfmaq_f32(acc, a_high, b_high);
+inline float32x4_t fast_exp_f32x4(float32x4_t x) {
+    const float32x4_t log2e = vdupq_n_f32(1.4426950408889634f);
+    const float32x4_t ln2 = vdupq_n_f32(0.6931471805599453f);
+
+    const float32x4_t c0 = vdupq_n_f32(1.0f);
+    const float32x4_t c1 = vdupq_n_f32(0.6931471805599453f); 
+    const float32x4_t c2 = vdupq_n_f32(0.2402265069591007f);  
+    const float32x4_t c3 = vdupq_n_f32(0.05550410866482158f);
+    const float32x4_t c4 = vdupq_n_f32(0.009618129842071803f); 
+
+    x = vmaxq_f32(x, vdupq_n_f32(-87.0f));
+    x = vminq_f32(x, vdupq_n_f32(87.0f));
+
+    float32x4_t z = vmulq_f32(x, log2e);
+
+    int32x4_t zi = vcvtq_s32_f32(z);
+    float32x4_t zf = vsubq_f32(z, vcvtq_f32_s32(zi));
+
+    uint32x4_t neg_mask = vcltq_f32(zf, vdupq_n_f32(0.0f));
+    zi = vsubq_s32(zi, vandq_s32(vreinterpretq_s32_u32(neg_mask), vdupq_n_s32(1)));
+    zf = vaddq_f32(zf, vreinterpretq_f32_u32(vandq_u32(neg_mask, vreinterpretq_u32_f32(vdupq_n_f32(1.0f)))));
+
+    float32x4_t zf_ln2 = vmulq_f32(zf, ln2);
+    float32x4_t p = c4;
+    p = vfmaq_f32(c3, p, zf_ln2);
+    p = vfmaq_f32(c2, p, zf_ln2);
+    p = vfmaq_f32(c1, p, zf_ln2);
+    p = vfmaq_f32(c0, p, zf_ln2);
+
+    int32x4_t exp_bits = vshlq_n_s32(vaddq_s32(zi, vdupq_n_s32(127)), 23);
+    float32x4_t scale = vreinterpretq_f32_s32(exp_bits);
+
+    return vmulq_f32(p, scale);
+}
+
+inline float32x4_t fast_tanh_f32x4(float32x4_t x) {
+    const float32x4_t one = vdupq_n_f32(1.0f);
+    const float32x4_t neg_one = vdupq_n_f32(-1.0f);
+
+    uint32x4_t pos_sat = vcgtq_f32(x, vdupq_n_f32(4.5f));
+    uint32x4_t neg_sat = vcltq_f32(x, vdupq_n_f32(-4.5f));
+
+    const float32x4_t c27 = vdupq_n_f32(27.0f);
+    const float32x4_t c9 = vdupq_n_f32(9.0f);
+
+    float32x4_t x2 = vmulq_f32(x, x);
+    float32x4_t num = vaddq_f32(c27, x2);   
+    float32x4_t den = vfmaq_f32(c27, c9, x2);  
+
+    float32x4_t result = vmulq_f32(x, vdivq_f32(num, den));
+
+    result = vbslq_f32(pos_sat, one, result);
+    result = vbslq_f32(neg_sat, neg_one, result);
+
+    return result;
 }
 
 inline int8x16_t unpack_int4_lo(uint8x16_t packed) {
     uint8x16_t lo = vandq_u8(packed, vdupq_n_u8(0x0F));
-    uint8x16_t sign_mask = vcgtq_u8(lo, vdupq_n_u8(7));  
+    uint8x16_t sign_mask = vcgtq_u8(lo, vdupq_n_u8(7));
     uint8x16_t correction = vandq_u8(sign_mask, vdupq_n_u8(16));
     return vreinterpretq_s8_u8(vsubq_u8(lo, correction));
 }
@@ -90,6 +148,80 @@ inline void unpack_int4_to_int8x32(uint8x16_t packed, int8x16_t& out_lo, int8x16
     int8x16x2_t interleaved = vzipq_s8(lo_nibbles, hi_nibbles);
     out_lo = interleaved.val[0];
     out_hi = interleaved.val[1];
+}
+
+inline int32x4_t int4_dot_asm(int32x4_t acc, uint8x16_t packed, int8x16_t a_lo, int8x16_t a_hi) {
+#if defined(__aarch64__)
+    int8x16_t b_lo, b_hi;
+
+    __asm__ __volatile__ (
+        "movi   v16.16b, #0x0F          \n"  // low nibble mask
+        "movi   v17.16b, #7             \n"  // sign threshold
+        "movi   v18.16b, #16            \n"  // sign correction
+
+        "and    %[b_lo].16b, %[packed].16b, v16.16b  \n"
+
+        "ushr   %[b_hi].16b, %[packed].16b, #4      \n"
+
+        "cmgt   v19.16b, %[b_lo].16b, v17.16b       \n"
+        "and    v19.16b, v19.16b, v18.16b           \n"
+        "sub    %[b_lo].16b, %[b_lo].16b, v19.16b   \n"
+
+        "cmgt   v20.16b, %[b_hi].16b, v17.16b       \n"
+        "and    v20.16b, v20.16b, v18.16b           \n"
+        "sub    %[b_hi].16b, %[b_hi].16b, v20.16b   \n"
+
+        "zip1   v21.16b, %[b_lo].16b, %[b_hi].16b   \n"
+        "zip2   v22.16b, %[b_lo].16b, %[b_hi].16b   \n"
+
+        ".arch armv8.2-a+dotprod                    \n"
+        "sdot   %[acc].4s, %[a_lo].16b, v21.16b     \n"
+        "sdot   %[acc].4s, %[a_hi].16b, v22.16b     \n"
+
+        : [acc] "+w"(acc), [b_lo] "=w"(b_lo), [b_hi] "=w"(b_hi)
+        : [packed] "w"(packed), [a_lo] "w"(a_lo), [a_hi] "w"(a_hi)
+        : "v16", "v17", "v18", "v19", "v20", "v21", "v22"
+    );
+
+    return acc;
+#else
+    int8x16_t b_lo, b_hi;
+    unpack_int4_to_int8x32(packed, b_lo, b_hi);
+    acc = accum_dot(acc, a_lo, b_lo);
+    acc = accum_dot(acc, a_hi, b_hi);
+    return acc;
+#endif
+}
+
+inline int32_t int4_dot_m1_asm(const int8_t* a_ptr, const uint8_t* b_packed, size_t group_size) {
+#if defined(__aarch64__)
+    int32x4_t acc = vdupq_n_s32(0);
+
+    for (size_t k = 0; k < group_size; k += 64) {
+        uint8x16_t p0 = vld1q_u8(b_packed + k/2);
+        uint8x16_t p1 = vld1q_u8(b_packed + k/2 + 16);
+
+        int8x16_t a0 = vld1q_s8(a_ptr + k);
+        int8x16_t a1 = vld1q_s8(a_ptr + k + 16);
+        int8x16_t a2 = vld1q_s8(a_ptr + k + 32);
+        int8x16_t a3 = vld1q_s8(a_ptr + k + 48);
+
+        acc = int4_dot_asm(acc, p0, a0, a1);
+        acc = int4_dot_asm(acc, p1, a2, a3);
+    }
+
+    return vaddvq_s32(acc);
+#else
+    int32x4_t acc = vdupq_n_s32(0);
+    for (size_t k = 0; k < group_size; k += 32) {
+        uint8x16_t packed = vld1q_u8(b_packed + k/2);
+        int8x16_t b_lo, b_hi;
+        unpack_int4_to_int8x32(packed, b_lo, b_hi);
+        acc = accum_dot(acc, vld1q_s8(a_ptr + k), b_lo);
+        acc = accum_dot(acc, vld1q_s8(a_ptr + k + 16), b_hi);
+    }
+    return vaddvq_s32(acc);
+#endif
 }
 
 namespace CactusThreading {

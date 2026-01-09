@@ -113,44 +113,78 @@ void cactus_mean_axis_f16(const __fp16* input, __fp16* output, size_t outer_size
         });
 }
 
+struct VarianceState {
+    double sum;
+    double sum_sq;
+
+    VarianceState() : sum(0.0), sum_sq(0.0) {}
+    VarianceState(double s, double sq) : sum(s), sum_sq(sq) {}
+};
+
 double cactus_variance_all_f16(const __fp16* data, size_t num_elements) {
-    double mean = cactus_mean_all_f16(data, num_elements);
-
-    return CactusThreading::parallel_reduce(
+    VarianceState result = CactusThreading::parallel_reduce(
         num_elements, CactusThreading::Thresholds::ALL_REDUCE,
-        [&](size_t start_idx, size_t end_idx) -> double {
-            double thread_var = 0.0;
+        [&](size_t start_idx, size_t end_idx) -> VarianceState {
+            constexpr size_t SIMD_WIDTH = 8;
+            const size_t vectorized_end = start_idx + ((end_idx - start_idx) / SIMD_WIDTH) * SIMD_WIDTH;
 
-            for (size_t i = start_idx; i < end_idx; ++i) {
-                double diff = static_cast<double>(data[i]) - mean;
-                thread_var += diff * diff;
+            float32x4_t sum_vec_lo = vdupq_n_f32(0.0f);
+            float32x4_t sum_vec_hi = vdupq_n_f32(0.0f);
+            float32x4_t sum_sq_vec_lo = vdupq_n_f32(0.0f);
+            float32x4_t sum_sq_vec_hi = vdupq_n_f32(0.0f);
+
+            for (size_t i = start_idx; i < vectorized_end; i += SIMD_WIDTH) {
+                float16x8_t x = vld1q_f16(&data[i]);
+                float32x4_t x_lo = vcvt_f32_f16(vget_low_f16(x));
+                float32x4_t x_hi = vcvt_f32_f16(vget_high_f16(x));
+
+                sum_vec_lo = vaddq_f32(sum_vec_lo, x_lo);
+                sum_vec_hi = vaddq_f32(sum_vec_hi, x_hi);
+                sum_sq_vec_lo = vfmaq_f32(sum_sq_vec_lo, x_lo, x_lo);
+                sum_sq_vec_hi = vfmaq_f32(sum_sq_vec_hi, x_hi, x_hi);
             }
 
-            return thread_var;
+            // Reduce vectors to scalars
+            double sum = static_cast<double>(vaddvq_f32(vaddq_f32(sum_vec_lo, sum_vec_hi)));
+            double sum_sq = static_cast<double>(vaddvq_f32(vaddq_f32(sum_sq_vec_lo, sum_sq_vec_hi)));
+
+            for (size_t i = vectorized_end; i < end_idx; ++i) {
+                double x = static_cast<double>(data[i]);
+                sum += x;
+                sum_sq += x * x;
+            }
+
+            return VarianceState(sum, sum_sq);
         },
-        0.0,
-        [](double a, double b) { return a + b; }
-    ) / static_cast<double>(num_elements);
+        VarianceState(),
+        [](const VarianceState& a, const VarianceState& b) {
+            return VarianceState(a.sum + b.sum, a.sum_sq + b.sum_sq);
+        }
+    );
+
+    double mean = result.sum / static_cast<double>(num_elements);
+    double mean_sq = result.sum_sq / static_cast<double>(num_elements);
+    return mean_sq - mean * mean;  
 }
 
 void cactus_variance_axis_f16(const __fp16* input, __fp16* output, size_t outer_size, size_t axis_size, size_t inner_size) {
-    std::vector<__fp16> means(outer_size * inner_size);
-    cactus_mean_axis_f16(input, means.data(), outer_size, axis_size, inner_size);
 
     CactusThreading::parallel_for_2d(outer_size, inner_size, CactusThreading::Thresholds::AXIS_REDUCE,
         [&](size_t outer, size_t inner) {
-            size_t output_idx = outer * inner_size + inner;
-            float mean_val = static_cast<float>(means[output_idx]);
-
-            float total_var = 0.0f;
+            float sum = 0.0f;
+            float sum_sq = 0.0f;
 
             for (size_t a = 0; a < axis_size; a++) {
                 size_t idx = outer * axis_size * inner_size + a * inner_size + inner;
-                float diff = static_cast<float>(input[idx]) - mean_val;
-                total_var += diff * diff;
+                float x = static_cast<float>(input[idx]);
+                sum += x;
+                sum_sq += x * x;
             }
 
-            output[output_idx] = static_cast<__fp16>(total_var / static_cast<float>(axis_size));
+            float mean = sum / static_cast<float>(axis_size);
+            float mean_sq = sum_sq / static_cast<float>(axis_size);
+            size_t output_idx = outer * inner_size + inner;
+            output[output_idx] = static_cast<__fp16>(mean_sq - mean * mean);
         });
 }
 

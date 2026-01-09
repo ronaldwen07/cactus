@@ -59,6 +59,30 @@ double calculate_gflops(size_t ops, double time_ms) {
     return ops / (time_ms * 1e6);
 }
 
+void benchmark_streaming_stores(TestUtils::TestRunner& runner, const BenchmarkConfig& config) {
+    std::vector<size_t> sizes = {1024*1024, 4*1024*1024};
+
+    for (size_t num_elements : sizes) {
+        std::vector<__fp16> A(num_elements), B(num_elements), C(num_elements);
+        for (size_t i = 0; i < num_elements; ++i) {
+            A[i] = static_cast<__fp16>((static_cast<float>(rand()) / RAND_MAX - 0.5f) * 2.0f);
+            B[i] = static_cast<__fp16>((static_cast<float>(rand()) / RAND_MAX - 0.5f) * 2.0f);
+        }
+
+        double time_ms = time_operation<__fp16>([&]() {
+            cactus_add_f16(A.data(), B.data(), C.data(), num_elements);
+        }, config.iterations);
+
+        double gb_per_sec = (num_elements * 2 * 3) / (time_ms * 1e6);
+        std::ostringstream details;
+        details << std::fixed << std::setprecision(3) << time_ms << "ms, "
+                << std::setprecision(2) << gb_per_sec << " GB/s";
+        runner.log_performance(
+            "Add (stream) " + std::to_string(num_elements / (1024*1024)) + "M elements",
+            details.str());
+    }
+}
+
 template<typename T>
 void benchmark_binary_elementwise_ops(TestUtils::TestRunner& runner, const BenchmarkConfig& config) {
     const std::vector<std::pair<std::string, std::function<size_t(CactusGraph&, size_t, size_t)>>> ops = {
@@ -99,6 +123,87 @@ void benchmark_binary_elementwise_ops(TestUtils::TestRunner& runner, const Bench
                     << std::setprecision(2) << gflops << " GFLOPS";
             runner.log_performance(op_name + " " + std::to_string(dim) + "x" + std::to_string(dim),
                                  details.str());
+        }
+    }
+}
+
+void benchmark_conv1d_ops(TestUtils::TestRunner& runner, const BenchmarkConfig& config) {
+    std::vector<std::tuple<size_t, size_t, size_t, size_t>> shapes = {
+        {1, 3000, 80, 512},
+        {1, 1500, 512, 512},
+    };
+
+    for (const auto& [N, L, C_in, C_out] : shapes) {
+        size_t stride = 1;
+        size_t out_len = ((L - 1) / stride) + 1;
+
+        std::vector<__fp16> input(N * C_in * L);
+        for (size_t i = 0; i < input.size(); ++i) {
+            input[i] = static_cast<__fp16>((static_cast<float>(rand()) / RAND_MAX - 0.5f) * 2.0f);
+        }
+
+        std::vector<__fp16> weight(C_out * C_in * 3);
+        for (size_t i = 0; i < weight.size(); ++i) {
+            weight[i] = static_cast<__fp16>((static_cast<float>(rand()) / RAND_MAX - 0.5f) * 0.1f);
+        }
+
+        std::vector<__fp16> output(N * C_out * out_len);
+
+        double time_ms = time_operation<__fp16>([&]() {
+            cactus_conv1d_f16_k3(input.data(), weight.data(), output.data(),
+                                  N, L, C_in, C_out, stride);
+        }, config.iterations);
+
+        size_t flops = 2ULL * N * out_len * C_out * C_in * 3;
+        double gflops = flops / (time_ms * 1e6);
+
+        std::ostringstream details;
+        details << std::fixed << std::setprecision(3) << time_ms << "ms, "
+                << std::setprecision(2) << gflops << " GFLOPS";
+        runner.log_performance(
+            "Conv1D k3 " + std::to_string(N) + "x" + std::to_string(L) + "x" + std::to_string(C_in) + "→" + std::to_string(C_out),
+            details.str());
+    }
+}
+
+void benchmark_broadcast_ops(TestUtils::TestRunner& runner, const BenchmarkConfig& config) {
+    for (size_t dim : config.dimensions) {
+        size_t rows = dim;
+        size_t cols = dim;
+        size_t total_elements = rows * cols;
+
+        std::vector<__fp16> A(total_elements);
+        for (size_t i = 0; i < total_elements; ++i) {
+            A[i] = static_cast<__fp16>((static_cast<float>(rand()) / RAND_MAX - 0.5f) * 2.0f);
+        }
+
+        std::vector<__fp16> B_vec(cols);
+        for (size_t i = 0; i < cols; ++i) {
+            B_vec[i] = static_cast<__fp16>((static_cast<float>(rand()) / RAND_MAX - 0.5f) * 0.1f);
+        }
+
+        std::vector<__fp16> C(total_elements);
+
+        {
+            size_t a_strides[2] = {cols, 1};
+            size_t b_strides[2] = {0, 1};
+            size_t output_shape[2] = {rows, cols};
+
+            double time_ms = time_operation<__fp16>([&]() {
+                cactus_add_broadcast_f16(A.data(), B_vec.data(), C.data(),
+                                          a_strides, b_strides, output_shape, 2);
+            }, config.iterations);
+
+            double gflops = calculate_gflops(total_elements, time_ms);
+            double gb_per_sec = (total_elements * 2 * 3) / (time_ms * 1e6);
+
+            std::ostringstream details;
+            details << std::fixed << std::setprecision(3) << time_ms << "ms, "
+                    << std::setprecision(2) << gflops << " GFLOPS, "
+                    << std::setprecision(2) << gb_per_sec << " GB/s";
+            runner.log_performance(
+                "Broadcast Add " + std::to_string(dim) + "x" + std::to_string(dim) + "+[" + std::to_string(dim) + "]",
+                details.str());
         }
     }
 }
@@ -188,7 +293,7 @@ void benchmark_matmul_ops(TestUtils::TestRunner& runner, const BenchmarkConfig& 
 }
 
 void benchmark_matmul_int8_grouped(TestUtils::TestRunner& runner, const BenchmarkConfig& config) {
-    const size_t group_size = 64;  // Kernel processes 64 K elements at a time
+    const size_t group_size = 64; 
 
     std::vector<std::tuple<size_t, size_t, size_t>> shapes = {
         {1, 1024, 1024},
@@ -214,7 +319,6 @@ void benchmark_matmul_int8_grouped(TestUtils::TestRunner& runner, const Benchmar
             B_scales[i] = static_cast<__fp16>(0.01f + (static_cast<float>(rand()) / RAND_MAX) * 0.05f);
         }
 
-        // Pre-quantize A to INT8 + scales
         std::vector<int8_t> A_quant(M * K_aligned);
         std::vector<float> A_scales(M);
         for (size_t m = 0; m < M; ++m) {
@@ -818,6 +922,58 @@ void benchmark_spectrogram(TestUtils::TestRunner& runner, const BenchmarkConfig&
         details.str());
 }
 
+void benchmark_gemm_f16_direct(TestUtils::TestRunner& runner, const BenchmarkConfig& config) {
+    std::vector<std::tuple<size_t, size_t, size_t>> shapes = {
+        {1, 1024, 1024},
+        {1024, 1024, 1024},
+    };
+
+    for (const auto& [M, K, N] : shapes) {
+        std::vector<__fp16> A(M * K), B_T(N * K), C(M * N);
+        for (size_t i = 0; i < M * K; ++i) {
+            A[i] = static_cast<__fp16>((static_cast<float>(rand()) / RAND_MAX - 0.5f) * 2.0f);
+        }
+        for (size_t i = 0; i < N * K; ++i) {
+            B_T[i] = static_cast<__fp16>((static_cast<float>(rand()) / RAND_MAX - 0.5f) * 2.0f);
+        }
+
+        double time_ms = time_operation<__fp16>([&]() {
+            cactus_matmul_f16(A.data(), B_T.data(), C.data(), M, K, N);
+        }, config.iterations);
+
+        double gflops = calculate_gflops(2ULL * M * K * N, time_ms);
+        std::ostringstream details;
+        details << std::fixed << std::setprecision(3) << time_ms << "ms, "
+                << std::setprecision(2) << gflops << " GFLOPS";
+        runner.log_performance("MatMul F16 " + std::to_string(M) + "x" + std::to_string(K) + "x" + std::to_string(N),
+                             details.str());
+    }
+}
+
+bool test_gemm_f16_direct_performance(TestUtils::TestRunner& runner) {
+    BenchmarkConfig config;
+    benchmark_gemm_f16_direct(runner, config);
+    return true;
+}
+
+bool test_streaming_stores_performance(TestUtils::TestRunner& runner) {
+    BenchmarkConfig config;
+    benchmark_streaming_stores(runner, config);
+    return true;
+}
+
+bool test_conv1d_operations_performance(TestUtils::TestRunner& runner) {
+    BenchmarkConfig config;
+    benchmark_conv1d_ops(runner, config);
+    return true;
+}
+
+bool test_broadcast_operations_performance(TestUtils::TestRunner& runner) {
+    BenchmarkConfig config;
+    benchmark_broadcast_ops(runner, config);
+    return true;
+}
+
 bool test_binary_elementwise_performance(TestUtils::TestRunner& runner) {
     BenchmarkConfig config;
     benchmark_binary_elementwise_ops<__fp16>(runner, config);
@@ -906,9 +1062,13 @@ bool test_signals_performance(TestUtils::TestRunner& runner) {
 int main() {
     TestUtils::TestRunner runner("Performance Benchmarks");
 
+    runner.run_test("Streaming Stores", test_streaming_stores_performance(runner));
+    runner.run_test("Conv1D Operations", test_conv1d_operations_performance(runner));
+    runner.run_test("Broadcast Operations", test_broadcast_operations_performance(runner));
     runner.run_test("Binary Element-wise Operations", test_binary_elementwise_performance(runner));
     runner.run_test("Scalar Operations", test_scalar_operations_performance(runner));
     runner.run_test("Matrix Multiplication", test_matrix_multiplication_performance(runner));
+    runner.run_test("F16 MatMul", test_gemm_f16_direct_performance(runner));
     runner.run_test("Grouped INT8 MatMul", test_grouped_int8_matmul_performance(runner));
     runner.run_test("Grouped INT4 MatMul", test_grouped_int4_matmul_performance(runner));
     runner.run_test("Unary Operations", test_unary_operations_performance(runner));

@@ -14,6 +14,7 @@ void cactus_silu_f16(const __fp16* input, __fp16* output, size_t num_elements) {
         [&](size_t start_idx, size_t end_idx) {
             constexpr size_t SIMD_WIDTH = 8;
             const size_t vectorized_end = start_idx + ((end_idx - start_idx) / SIMD_WIDTH) * SIMD_WIDTH;
+            const float32x4_t one_f32 = vdupq_n_f32(1.0f);
 
             for (size_t i = start_idx; i < vectorized_end; i += SIMD_WIDTH) {
                 float16x8_t x = vld1q_f16(&input[i]);
@@ -21,33 +22,16 @@ void cactus_silu_f16(const __fp16* input, __fp16* output, size_t num_elements) {
                 float32x4_t x_low = vcvt_f32_f16(vget_low_f16(x));
                 float32x4_t x_high = vcvt_f32_f16(vget_high_f16(x));
 
-                float32x4_t neg_x_low = vnegq_f32(x_low);
-                float32x4_t neg_x_high = vnegq_f32(x_high);
+                float32x4_t exp_low = fast_exp_f32x4(vnegq_f32(x_low));
+                float32x4_t exp_high = fast_exp_f32x4(vnegq_f32(x_high));
 
-                float exp_vals[8];
-                vst1q_f32(&exp_vals[0], neg_x_low);
-                vst1q_f32(&exp_vals[4], neg_x_high);
+                float32x4_t sigmoid_low = vdivq_f32(one_f32, vaddq_f32(one_f32, exp_low));
+                float32x4_t sigmoid_high = vdivq_f32(one_f32, vaddq_f32(one_f32, exp_high));
 
-                for (int j = 0; j < 8; j++) {
-                    exp_vals[j] = expf(exp_vals[j]);
-                }
+                float32x4_t silu_low = vmulq_f32(x_low, sigmoid_low);
+                float32x4_t silu_high = vmulq_f32(x_high, sigmoid_high);
 
-                float32x4_t exp_low = vld1q_f32(&exp_vals[0]);
-                float32x4_t exp_high = vld1q_f32(&exp_vals[4]);
-
-                float32x4_t one_f32 = vdupq_n_f32(1.0f);
-                float32x4_t one_plus_exp_low = vaddq_f32(one_f32, exp_low);
-                float32x4_t one_plus_exp_high = vaddq_f32(one_f32, exp_high);
-
-                float32x4_t sigmoid_low = vdivq_f32(one_f32, one_plus_exp_low);
-                float32x4_t sigmoid_high = vdivq_f32(one_f32, one_plus_exp_high);
-
-                float16x4_t sigmoid_low_f16 = vcvt_f16_f32(sigmoid_low);
-                float16x4_t sigmoid_high_f16 = vcvt_f16_f32(sigmoid_high);
-                float16x8_t sigmoid = vcombine_f16(sigmoid_low_f16, sigmoid_high_f16);
-
-                float16x8_t silu = vmulq_f16(x, sigmoid);
-
+                float16x8_t silu = vcombine_f16(vcvt_f16_f32(silu_low), vcvt_f16_f32(silu_high));
                 vst1q_f16(&output[i], silu);
             }
 
@@ -82,29 +66,18 @@ void cactus_gelu_f16(const __fp16* input, __fp16* output, size_t num_elements) {
                 float32x4_t x_cubed_low = vmulq_f32(vmulq_f32(x_low, x_low), x_low);
                 float32x4_t x_cubed_high = vmulq_f32(vmulq_f32(x_high, x_high), x_high);
 
-                float32x4_t inner_low = vmlaq_f32(x_low, coeff_vec, x_cubed_low);
-                float32x4_t inner_high = vmlaq_f32(x_high, coeff_vec, x_cubed_high);
+                float32x4_t inner_low = vfmaq_f32(x_low, coeff_vec, x_cubed_low);
+                float32x4_t inner_high = vfmaq_f32(x_high, coeff_vec, x_cubed_high);
                 inner_low = vmulq_f32(sqrt_2_pi_vec, inner_low);
                 inner_high = vmulq_f32(sqrt_2_pi_vec, inner_high);
 
-                float tanh_vals[8];
-                vst1q_f32(&tanh_vals[0], inner_low);
-                vst1q_f32(&tanh_vals[4], inner_high);
-                for (int j = 0; j < 8; j++) {
-                    tanh_vals[j] = tanhf(tanh_vals[j]);
-                }
-                float32x4_t tanh_low = vld1q_f32(&tanh_vals[0]);
-                float32x4_t tanh_high = vld1q_f32(&tanh_vals[4]);
+                float32x4_t tanh_low = fast_tanh_f32x4(inner_low);
+                float32x4_t tanh_high = fast_tanh_f32x4(inner_high);
 
-                float32x4_t one_plus_tanh_low = vaddq_f32(one, tanh_low);
-                float32x4_t one_plus_tanh_high = vaddq_f32(one, tanh_high);
-                float32x4_t gelu_low = vmulq_f32(vmulq_f32(half, x_low), one_plus_tanh_low);
-                float32x4_t gelu_high = vmulq_f32(vmulq_f32(half, x_high), one_plus_tanh_high);
+                float32x4_t gelu_low = vmulq_f32(vmulq_f32(half, x_low), vaddq_f32(one, tanh_low));
+                float32x4_t gelu_high = vmulq_f32(vmulq_f32(half, x_high), vaddq_f32(one, tanh_high));
 
-                float16x4_t gelu_low_f16 = vcvt_f16_f32(gelu_low);
-                float16x4_t gelu_high_f16 = vcvt_f16_f32(gelu_high);
-                float16x8_t gelu_f16 = vcombine_f16(gelu_low_f16, gelu_high_f16);
-
+                float16x8_t gelu_f16 = vcombine_f16(vcvt_f16_f32(gelu_low), vcvt_f16_f32(gelu_high));
                 vst1q_f16(&output[i], gelu_f16);
             }
 
@@ -176,54 +149,18 @@ void cactus_gelu_f16_erf(const __fp16* input, __fp16* output, size_t num_element
     );
 }
 
-namespace CactusSoftmax {
-
-inline float32x4_t fast_exp_neon(float32x4_t x) {
-    const float32x4_t log2e = vdupq_n_f32(1.4426950408889634f);
-    const float32x4_t c1 = vdupq_n_f32(0.6931471805599453f);
-    const float32x4_t c2 = vdupq_n_f32(0.2402265069591007f);
-    const float32x4_t c3 = vdupq_n_f32(0.05550410866482158f);
-    const float32x4_t c4 = vdupq_n_f32(0.009618129842071803f);
-    const float32x4_t c5 = vdupq_n_f32(0.001333355814670656f);
-    
-    const float32x4_t clamp_min = vdupq_n_f32(-87.0f);
-    const float32x4_t clamp_max = vdupq_n_f32(87.0f);
-    
-    x = vmaxq_f32(x, clamp_min);
-    x = vminq_f32(x, clamp_max);
-    
-    x = vmulq_f32(x, log2e);
-    
-    int32x4_t xi = vcvtq_s32_f32(x);
-    float32x4_t xf = vsubq_f32(x, vcvtq_f32_s32(xi));
-    
-    float32x4_t p = c5;
-    p = vfmaq_f32(c4, p, xf);
-    p = vfmaq_f32(c3, p, xf);
-    p = vfmaq_f32(c2, p, xf);
-    p = vfmaq_f32(c1, p, xf);
-    p = vfmaq_f32(vdupq_n_f32(1.0f), p, xf); 
-    
-    int32x4_t exponent = vaddq_s32(xi, vdupq_n_s32(127));
-    exponent = vshlq_n_s32(exponent, 23);
-    float32x4_t scale = vreinterpretq_f32_s32(exponent);
-    
-    return vmulq_f32(p, scale);
-}
-
-}
-
 void kernel_softmax_f16_single(const __fp16* input, __fp16* output, size_t vocab_size) {
-    constexpr size_t SIMD_WIDTH = 8;  
-    constexpr size_t UNROLL_FACTOR = 4; 
+
+    constexpr size_t SIMD_WIDTH = 8;
+    constexpr size_t UNROLL_FACTOR = 4;
     constexpr size_t VECTORIZED_WIDTH = SIMD_WIDTH * UNROLL_FACTOR;
     const size_t vocab_vectorized = (vocab_size / VECTORIZED_WIDTH) * VECTORIZED_WIDTH;
-    
-    float32x4_t max_vec[UNROLL_FACTOR * 2];  
+
+    float32x4_t max_vec[UNROLL_FACTOR * 2];
     for (size_t u = 0; u < UNROLL_FACTOR * 2; u++) {
         max_vec[u] = vdupq_n_f32(-std::numeric_limits<float>::infinity());
     }
-    
+
     for (size_t i = 0; i < vocab_vectorized; i += VECTORIZED_WIDTH) {
         for (size_t u = 0; u < UNROLL_FACTOR; u++) {
             float16x8_t x_vec_f16 = vld1q_f16(&input[i + u * SIMD_WIDTH]);
@@ -233,63 +170,57 @@ void kernel_softmax_f16_single(const __fp16* input, __fp16* output, size_t vocab
             max_vec[u * 2 + 1] = vmaxq_f32(max_vec[u * 2 + 1], x_high);
         }
     }
-    
+
     float32x4_t final_max = max_vec[0];
     for (size_t u = 1; u < UNROLL_FACTOR * 2; u++) {
         final_max = vmaxq_f32(final_max, max_vec[u]);
     }
-    
+
     float max_val = vmaxvq_f32(final_max);
     for (size_t i = vocab_vectorized; i < vocab_size; ++i) {
         max_val = std::max(max_val, static_cast<float>(input[i]));
     }
-    
+
     const float32x4_t max_broadcast = vdupq_n_f32(max_val);
-    const float16x8_t max_broadcast_f16 = vcombine_f16(
-        vcvt_f16_f32(max_broadcast), 
-        vcvt_f16_f32(max_broadcast)
-    );
-    
+
     float32x4_t sum_vec[UNROLL_FACTOR * 2];
     for (size_t u = 0; u < UNROLL_FACTOR * 2; u++) {
         sum_vec[u] = vdupq_n_f32(0.0f);
     }
-    
+
     for (size_t i = 0; i < vocab_vectorized; i += VECTORIZED_WIDTH) {
         for (size_t u = 0; u < UNROLL_FACTOR; u++) {
             float16x8_t x_vec_f16 = vld1q_f16(&input[i + u * SIMD_WIDTH]);
-            
-            float16x8_t centered_f16 = vsubq_f16(x_vec_f16, max_broadcast_f16);
-            
-            float32x4_t centered_low = vcvt_f32_f16(vget_low_f16(centered_f16));
-            float32x4_t centered_high = vcvt_f32_f16(vget_high_f16(centered_f16));
-            
-            float32x4_t exp_low = CactusSoftmax::fast_exp_neon(centered_low);
-            float32x4_t exp_high = CactusSoftmax::fast_exp_neon(centered_high);
-            
+
+            float32x4_t x_low = vcvt_f32_f16(vget_low_f16(x_vec_f16));
+            float32x4_t x_high = vcvt_f32_f16(vget_high_f16(x_vec_f16));
+
+            float32x4_t exp_low = fast_exp_f32x4(vsubq_f32(x_low, max_broadcast));
+            float32x4_t exp_high = fast_exp_f32x4(vsubq_f32(x_high, max_broadcast));
+
             float16x8_t exp_f16 = vcombine_f16(vcvt_f16_f32(exp_low), vcvt_f16_f32(exp_high));
             vst1q_f16(&output[i + u * SIMD_WIDTH], exp_f16);
-            
+
             sum_vec[u * 2] = vaddq_f32(sum_vec[u * 2], exp_low);
             sum_vec[u * 2 + 1] = vaddq_f32(sum_vec[u * 2 + 1], exp_high);
         }
     }
-    
+
     float32x4_t final_sum = sum_vec[0];
     for (size_t u = 1; u < UNROLL_FACTOR * 2; u++) {
         final_sum = vaddq_f32(final_sum, sum_vec[u]);
     }
-    
+
     float sum = vaddvq_f32(final_sum);
     for (size_t i = vocab_vectorized; i < vocab_size; ++i) {
         float exp_val = expf(static_cast<float>(input[i]) - max_val);
         output[i] = static_cast<__fp16>(exp_val);
         sum += exp_val;
     }
-    
+
     const float inv_sum = 1.0f / sum;
     const float16x8_t inv_sum_vec_f16 = vdupq_n_f16(static_cast<__fp16>(inv_sum));
-    
+
     for (size_t i = 0; i < vocab_vectorized; i += VECTORIZED_WIDTH) {
         for (size_t u = 0; u < UNROLL_FACTOR; u++) {
             float16x8_t exp_vec = vld1q_f16(&output[i + u * SIMD_WIDTH]);
@@ -297,7 +228,7 @@ void kernel_softmax_f16_single(const __fp16* input, __fp16* output, size_t vocab
             vst1q_f16(&output[i + u * SIMD_WIDTH], result);
         }
     }
-    
+
     for (size_t i = vocab_vectorized; i < vocab_size; ++i) {
         output[i] = static_cast<__fp16>(static_cast<float>(output[i]) * inv_sum);
     }

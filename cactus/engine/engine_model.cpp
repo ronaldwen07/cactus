@@ -206,9 +206,13 @@ void Model::prefill(const std::vector<uint32_t>& tokens, size_t chunk_size, cons
         size_t start = chunk_idx * chunk_size;
         size_t end = start + chunk_size;
         std::vector<uint32_t> chunk(tokens.begin() + start, tokens.begin() + end);
+        if (chunk_idx == 1) {
+            gb->set_prefill_mode(true);
+        }
         process_chunk(chunk);
     }
 
+    gb->set_prefill_mode(false);
     size_t final_start = num_full_chunks * chunk_size;
     std::vector<uint32_t> final_chunk(tokens.begin() + final_start, tokens.end());
     process_chunk(final_chunk);
