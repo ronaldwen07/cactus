@@ -171,7 +171,6 @@ void cactus_matmul_int8(
             }
 
             if (cactus_has_i8mm()) {
-                CACTUS_LOG_WARN("kernel", "cactus_matmul_int8: using i8mm fast path");
                 for (size_t g = 0; g < num_groups; g++) {
                     const size_t k_base = g * group_size;
 
@@ -282,7 +281,6 @@ void cactus_matmul_int8(
                     }
                 }
             } else {
-                CACTUS_LOG_WARN("kernel", "cactus_matmul_int8: using dotprod fallback");
                 for (size_t g = 0; g < num_groups; g++) {
                     const size_t k_base = g * group_size;
 
@@ -421,7 +419,6 @@ void cactus_matmul_int4(
                 }
 
                 if (cactus_has_i8mm()) {
-                    CACTUS_LOG_WARN("kernel", "cactus_matmul_int4: using i8mm fast path");
                     size_t mi = 0;
                     for (; mi + 1 < actual_m; mi += 2) {
                         const int8_t* a_base0 = A + (m_start + mi) * K + k_base;
@@ -487,7 +484,6 @@ void cactus_matmul_int4(
                         }
                     }
                 } else {
-                    CACTUS_LOG_WARN("kernel", "cactus_matmul_int4: using dotprod fallback");
                     for (size_t mi = 0; mi < actual_m; mi++) {
                         const int8_t* a_ptr = A + (m_start + mi) * K + k_base;
 
