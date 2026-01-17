@@ -46,7 +46,13 @@ def sha256(file):
 
 def zip_dir(source_dir, output_path):
     subprocess.run(
-        ["zip", "-r", "-9", str(output_path), "."],
+        ["find", ".", "-exec", "touch", "-t", "200310131122", "{}", "+"],
+        cwd=source_dir,
+        check=True,
+    )
+
+    subprocess.run(
+        ["zip", "-X", "-o", "-r", "-9", str(output_path), "."],
         cwd=source_dir,
         check=True,
         capture_output=True,
@@ -103,8 +109,8 @@ def stage_model(model_id, weights_dir, precision, bits):
     model_zip = stage / "weights" / f"{model_name_lower}.zip"
     zip_dir(weights_out, model_zip)
 
-    combined_hash = hashlib.sha256()
-    combined_hash.update(sha256(model_zip).encode())
+    fingerprint = hashlib.sha256()
+    fingerprint.update(sha256(model_zip).encode())
 
     config = {
         "model_type": model_name,
@@ -120,14 +126,14 @@ def stage_model(model_id, weights_dir, precision, bits):
             model_pro_zip = stage / "weights" / f"{model_name_lower}-pro.zip"
             zip_dir(weights_out, model_pro_zip)
 
-            combined_hash.update(sha256(model_pro_zip).encode())
+            fingerprint.update(sha256(model_pro_zip).encode())
             config["bits"] = bits
         except Exception as e:
             print(f"Failed to export pro weights for {model_id}: {e}")
 
     shutil.rmtree(weights_out)
 
-    config["sha256"] = combined_hash.hexdigest()
+    config["fingerprint"] = fingerprint.hexdigest()
 
     with open(stage / "config.json", "w") as f:
         json.dump(config, f, indent=2)
@@ -138,9 +144,7 @@ def stage_model(model_id, weights_dir, precision, bits):
 def get_prev_config(api, repo, current):
     try:
         tags = api.list_repo_refs(repo_id=repo, repo_type="model").tags
-        versions = sorted(
-            [t.name for t in tags if t.name.startswith("v")], reverse=True
-        )
+        versions = sorted([t.name for t in tags], reverse=True)
         prev_ver = next((v for v in versions if v != current), None)
         if not prev_ver:
             return None
@@ -159,7 +163,7 @@ def get_prev_config(api, repo, current):
 def changed(curr, prev):
     if not prev:
         return True
-    return curr.get("sha256") != prev.get("sha256")
+    return curr.get("fingerprint") != prev.get("fingerprint")
 
 
 def main():
