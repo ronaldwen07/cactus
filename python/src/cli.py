@@ -210,6 +210,10 @@ def cmd_build(args):
         return cmd_build_apple(args)
     if getattr(args, 'android', False):
         return cmd_build_android(args)
+    if getattr(args, 'flutter', False):
+        return cmd_build_flutter(args)
+    if getattr(args, 'python', False):
+        return cmd_build_python(args)
 
     print_color(BLUE, "Building Cactus chat...")
     print("=" * 23)
@@ -323,6 +327,67 @@ def cmd_build_android(args):
         return 1
 
     print_color(GREEN, "Android build complete!")
+    return 0
+
+
+def cmd_build_flutter(args):
+    """Build Cactus for Flutter (iOS, macOS, Android)."""
+    print_color(BLUE, "Building Cactus for Flutter...")
+    print("=" * 32)
+
+    build_script = PROJECT_ROOT / "flutter" / "build.sh"
+    if not build_script.exists():
+        print_color(RED, f"Error: build.sh not found at {build_script}")
+        return 1
+
+    result = run_command(str(build_script), cwd=PROJECT_ROOT / "flutter", check=False)
+    if result.returncode != 0:
+        print_color(RED, "Flutter build failed")
+        return 1
+
+    print_color(GREEN, "Flutter build complete!")
+    print()
+    print("Output:")
+    print(f"  flutter/libcactus.so")
+    print(f"  flutter/cactus-ios.xcframework")
+    print(f"  flutter/cactus-macos.xcframework")
+    return 0
+
+
+def cmd_build_python(args):
+    """Build Cactus shared library for Python FFI."""
+    print_color(BLUE, "Building Cactus for Python...")
+    print("=" * 30)
+
+    if not check_command('cmake'):
+        print_color(RED, "Error: CMake is not installed")
+        print("  macOS: brew install cmake")
+        print("  Ubuntu: sudo apt-get install cmake")
+        return 1
+
+    cactus_dir = PROJECT_ROOT / "cactus"
+    build_script = cactus_dir / "build.sh"
+    if not build_script.exists():
+        print_color(RED, f"Error: build.sh not found at {build_script}")
+        return 1
+
+    result = run_command(str(build_script), cwd=cactus_dir, check=False)
+    if result.returncode != 0:
+        print_color(RED, "Build failed")
+        return 1
+
+    if platform.system() == "Darwin":
+        lib_name = "libcactus.dylib"
+    else:
+        lib_name = "libcactus.so"
+
+    lib_path = cactus_dir / "build" / lib_name
+    if not lib_path.exists():
+        print_color(RED, f"Shared library not found at {lib_path}")
+        return 1
+
+    print_color(GREEN, "Python build complete!")
+    print(f"Library: {lib_path}")
     return 0
 
 
@@ -754,6 +819,8 @@ def create_parser():
     Optional flags:
     --apple                            build for Apple (iOS/macOS)
     --android                          build for Android
+    --flutter                          build for Flutter (all platforms)
+    --python                           build shared lib for Python FFI
 
   -----------------------------------------------------------------
 
@@ -781,11 +848,11 @@ def create_parser():
   Python bindings:
 
   Cactus python package is auto installed for researchers and testing
-  Please see tools/examples.py and run the following instructions.
+  Please see python/example.py and run the following instructions.
 
   1. cactus build
   2. cactus download LiquidAI/LFM2-VL-450M
-  3. python tools/example.py
+  3. python python/example.py
 
   Note: Use any supported model
 
@@ -815,6 +882,10 @@ def create_parser():
                               help='Build for Apple platforms (iOS/macOS)')
     build_parser.add_argument('--android', action='store_true',
                               help='Build for Android')
+    build_parser.add_argument('--flutter', action='store_true',
+                              help='Build for Flutter (iOS, macOS, Android)')
+    build_parser.add_argument('--python', action='store_true',
+                              help='Build shared library for Python FFI')
 
     run_parser = subparsers.add_parser('run', help='Build, download (if needed), and run chat')
     run_parser.add_argument('model_id', nargs='?', default=DEFAULT_MODEL_ID,
