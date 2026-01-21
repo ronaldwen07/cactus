@@ -452,11 +452,23 @@ class CompletionResult {
   });
 
   factory CompletionResult.fromJson(Map<String, dynamic> json) {
+    List<Map<String, dynamic>>? parsedFunctionCalls;
+    if (json['function_calls'] != null && json['function_calls'] is List) {
+      try {
+        parsedFunctionCalls = (json['function_calls'] as List)
+            .whereType<Map<String, dynamic>>()
+            .toList();
+        if (parsedFunctionCalls.isEmpty) {
+          parsedFunctionCalls = null;
+        }
+      } catch (_) {
+        parsedFunctionCalls = null;
+      }
+    }
+
     return CompletionResult(
-      text: json['text'] ?? '',
-      functionCalls: json['function_calls'] != null
-          ? List<Map<String, dynamic>>.from(json['function_calls'])
-          : null,
+      text: json['text'] ?? json['response'] ?? '',
+      functionCalls: parsedFunctionCalls,
       promptTokens: json['prompt_tokens'] ?? 0,
       completionTokens: json['completion_tokens'] ?? 0,
       timeToFirstToken: (json['time_to_first_token'] ?? 0.0).toDouble(),

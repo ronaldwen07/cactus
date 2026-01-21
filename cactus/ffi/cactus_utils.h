@@ -434,10 +434,10 @@ inline void parse_function_calls_from_response(const std::string& response_text,
 
     while ((tool_start_pos = regular_response.find(TOOL_CALL_START, tool_start_pos)) != std::string::npos) {
         size_t content_start = tool_start_pos + TOOL_CALL_START.length();
-        size_t tool_end_pos = response_text.find(TOOL_CALL_END, content_start);
+        size_t tool_end_pos = regular_response.find(TOOL_CALL_END, content_start);
 
         if (tool_end_pos != std::string::npos) {
-            std::string tool_content = response_text.substr(content_start, tool_end_pos - content_start);
+            std::string tool_content = regular_response.substr(content_start, tool_end_pos - content_start);
 
             if (tool_content.size() > 2 && tool_content[0] == '[' && tool_content[tool_content.size()-1] == ']') {
                 tool_content = tool_content.substr(1, tool_content.size() - 2); 
@@ -495,7 +495,8 @@ inline void parse_function_calls_from_response(const std::string& response_text,
             }
 
             regular_response.erase(tool_start_pos, tool_end_pos + TOOL_CALL_END.length() - tool_start_pos);
-            tool_start_pos = tool_end_pos + TOOL_CALL_END.length();
+            // Don't advance tool_start_pos after erase - the string has shifted
+            // and the next tool call (if any) will now be at tool_start_pos
         } else {
             break;
         }
