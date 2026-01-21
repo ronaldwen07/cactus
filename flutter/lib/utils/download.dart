@@ -102,11 +102,17 @@ Future<void> _downloadFile(
         sink.add(chunk);
         bytesReceived += chunk.length;
 
-        if (contentLength > 0 && onProgress != null) {
-          final progress = bytesReceived / contentLength;
+        if (onProgress != null) {
           final mbReceived = (bytesReceived / (1024 * 1024)).toStringAsFixed(1);
-          final mbTotal = (contentLength / (1024 * 1024)).toStringAsFixed(1);
-          onProgress(progress, 'Downloading: $mbReceived MB / $mbTotal MB');
+          if (contentLength > 0) {
+            // Known size: report percentage
+            final progress = (bytesReceived / contentLength).clamp(0.0, 1.0);
+            final mbTotal = (contentLength / (1024 * 1024)).toStringAsFixed(1);
+            onProgress(progress, 'Downloading: $mbReceived MB / $mbTotal MB');
+          } else {
+            // Unknown size: report bytes received
+            onProgress(0.5, 'Downloading: $mbReceived MB');
+          }
         }
       }
     } finally {
