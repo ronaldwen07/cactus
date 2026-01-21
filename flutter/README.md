@@ -45,7 +45,7 @@ see the main [README.md](../README.md) for how to use CLI & download weight
 
 ### Downloading Models
 
-Use the `downloadModel` utility to download models from URLs with progress tracking and automatic caching:
+Use the `downloadModel` utility to download models from URLs with progress tracking and automatic caching. This utility is designed to be called before `Cactus.create()` to ensure models are available locally (see [#96](https://github.com/cactus-compute/cactus/issues/96) for the unified initialization API).
 
 ```dart
 import 'lib/utils/download.dart';
