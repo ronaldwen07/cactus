@@ -43,6 +43,33 @@ see the main [README.md](../README.md) for how to use CLI & download weight
 
 ## Usage
 
+### Downloading Models
+
+Use the `downloadModel` utility to download models from URLs with progress tracking and automatic caching:
+
+```dart
+import 'lib/utils/download.dart';
+import 'cactus.dart';
+
+// Download a model with progress tracking
+final modelPath = await downloadModel(
+  'https://huggingface.co/cactus-compute/model/resolve/main/model.bin',
+  filename: 'my-model.bin',
+  onProgress: (progress, status) {
+    print('$status: ${(progress * 100).toStringAsFixed(1)}%');
+  },
+);
+
+// Initialize Cactus with the downloaded model
+final model = Cactus.create(modelPath);
+```
+
+Features:
+- **Automatic caching**: Skips download if file already exists with non-zero size
+- **Progress callbacks**: Reports download progress (0.0 to 1.0) and status messages
+- **Retry logic**: Automatically retries up to 3 times on failure
+- **Custom filenames**: Optionally specify a custom filename for the downloaded model
+
 ### Basic Completion
 
 ```dart
@@ -156,6 +183,27 @@ index.dispose();
 ```
 
 ## API Reference
+
+### downloadModel
+
+```dart
+Future<String> downloadModel(
+  String url, {
+  String? filename,
+  void Function(double progress, String status)? onProgress,
+})
+```
+
+Downloads a model file from a URL to the app's documents directory.
+
+**Parameters:**
+- `url` - The URL to download the model from
+- `filename` - Optional custom filename (extracts from URL if not provided)
+- `onProgress` - Optional callback receiving progress (0.0-1.0) and status message
+
+**Returns:** Local file path to the downloaded model
+
+**Throws:** Exception after 3 failed retry attempts
 
 ### Cactus
 
